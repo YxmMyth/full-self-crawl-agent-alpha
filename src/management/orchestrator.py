@@ -209,13 +209,13 @@ class Orchestrator:
             "Analyze current page structure (type, SPA detection, containers)",
             {"type": "object", "properties": {}})
 
-        registry.register("analyze_links", lambda **kwargs: analyze_links(browser, **kwargs),
-            "Extract and categorize links on the current page",
-            {"type": "object", "properties": {"goal": {"type": "string", "description": "Optional goal to help prioritize links"}}})
+        registry.register("analyze_links", lambda **kwargs: analyze_links(browser, **{k: v for k, v in kwargs.items() if k in ('html', 'base_url')}),
+            "Extract and categorize all links on the current page",
+            {"type": "object", "properties": {}})
 
         registry.register("search_page", lambda **kwargs: search_page_tool(browser, **kwargs),
             "Search for text patterns on the current page",
-            {"type": "object", "properties": {"pattern": {"type": "string", "description": "Text or regex pattern to search"}, "regex": {"type": "boolean", "description": "Use regex matching (default false)"}}, "required": ["pattern"]})
+            {"type": "object", "properties": {"query": {"type": "string", "description": "Text or regex pattern to search"}, "regex": {"type": "boolean", "description": "Use regex matching (default false)"}}, "required": ["query"]})
 
         # --- Execution (1) ---
         is_docker = os.path.exists("/.dockerenv")

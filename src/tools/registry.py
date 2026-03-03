@@ -216,10 +216,10 @@ class ToolRegistry:
                 missing = [r for r in required if r not in arguments]
                 if missing:
                     missing_hint = f" Required params: {required}. Missing: {missing}. You provided: {provided}."
-                    # Add usage example for common tools
+                    # Add usage hint for common tools
                     examples = {
-                        "extract_css": ' Example: extract_css(selectors={"title": "h3 a", "price": ".price_color"}, container=".product")',
-                        "save_data": ' Example: save_data(data=[{"title": "...", "price": "..."}], format="json")',
+                        "extract_css": ' Example: extract_css(selectors={"field1": "css_selector1", "field2": "css_selector2"}, container=".item")',
+                        "save_data": ' Example: save_data(data=[{"key": "value", ...}], format="json")',
                     }
                     if name in examples:
                         missing_hint += examples[name]

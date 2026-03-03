@@ -68,8 +68,8 @@ class ContextManager:
         if role == "exploration":
             role_text = """You are a web site exploration expert. Your goal is to understand the site structure and find pages containing the target data.
 
-Navigate the site, analyze page structure and links, and build a map of relevant pages.
-When you have found enough target pages, output your site map as a final message."""
+Use the available tools to navigate, analyze pages and links, and discover relevant URLs.
+When you have identified the target pages, stop and list them in your final message."""
         else:
             role_text = """You are a web data extraction expert. Your goal is to extract structured data from web pages according to the specification.
 

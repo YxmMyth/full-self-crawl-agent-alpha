@@ -80,7 +80,7 @@ Respond in JSON:
     "target_fields": [
         {{"name": "field_name", "description": "what this field contains"}}
     ] or null if this is a file download / non-structured task,
-    "min_items": 10,
+    "min_items": <estimate based on the requirement — consider how many items per page and how many pages the user wants>,
     "quality_threshold": 0.7
 }}"""
 
