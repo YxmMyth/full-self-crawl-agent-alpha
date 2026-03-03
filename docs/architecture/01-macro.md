@@ -22,8 +22,36 @@
 | browser-use Agent | step() = observe→decide→execute→post | 隐藏的管理层: MessageManager 做上下文压缩 |
 | ScrapeGraphAI | 用户选模式 (SmartScraper vs ScriptCreator) | 不做自动策略选择，让使用者决定 |
 | Crawl4AI | 插件式策略 (LLM/CSS/Cosine) | 不做 waterfall，让使用者配置 |
+| **Anthropic "Building Effective Agents"** | ACI (Agent-Computer Interface) | 工具设计投入 ≥ HCI 投入；Poka-yoke 防呆设计 |
+| **HuggingFace smolagents** | Code Agent (代码 > JSON 工具调用) | LLM 写代码比 JSON tool call 更灵活；planning_interval 周期性重规划 |
 
 **我们的区别**: 在 LLM-as-Controller 之上保留五层治理架构，解决 "LLM 需要管理" 的现实问题。
+
+### 1.2b 能力 vs 自主度 — ACI 设计哲学
+
+**核心矛盾**: 给 agent 更多能力（工具）→ 需要更多规则约束用法 → 约束限制了自主度。
+
+**解决方案** (来自 Anthropic + smolagents 的共识):
+
+1. **能力来自好的工具设计 (ACI)，不是 prompt 规则**
+   - 工具描述足够清晰，LLM 自然会选对用法
+   - 错误信息包含自纠正提示（而非只说"参数错"）
+   - 工具应当 Poka-yoke（防呆）：让错误用法难以发生
+
+2. **自主度来自不限制工具使用顺序**
+   - System prompt 不写 "1. navigate 2. analyze 3. extract" 这种硬编码流程
+   - LLM 根据观察到的环境自行决定下一步
+   - 每个网站结构不同，固定流程必然失败
+
+3. **execute_code 是终极后备 (CodeAct 思想)**
+   - 当专用工具无法解决问题时，LLM 可以写代码自己解决
+   - 这保证了能力的下限：只要问题可编程解决，agent 就能处理
+   - 专用工具是效率优化，不是能力边界
+
+4. **治理通过观察和建议，不通过限制**
+   - Governor 观察行为模式（循环、预算耗尽、连续失败）
+   - 通过 nudge 提醒 LLM（"你已经连续失败 3 次了，换个方法试试"）
+   - 只在极端情况强制停止（超时、超预算）
 
 ### 1.3 设计原则
 

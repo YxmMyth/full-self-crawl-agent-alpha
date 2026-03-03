@@ -189,6 +189,14 @@ else:
         "Execute Python code (restricted mode).",
         {"code": {"type": "string"},
          "language": {"type": "string", "enum": ["python"]}})
+
+# get_html 通过 _get_clean_html 包装器注册:
+# 自动去除 <script>, <style>, <svg>, <noscript>, HTML 注释
+# 确保 LLM 看到的是干净的内容 HTML，而非噪音
+registry.register("get_html", self._get_clean_html, ...)
+
+# analyze_links 注册时过滤 LLM 传入的未知 kwargs (Poka-yoke):
+# 如 LLM 多传了 goal 参数不会崩溃，而是被静默过滤
 ```
 
 ### 1.3 从 Agent 提取为 Tool
@@ -473,47 +481,47 @@ class Governor:
 **设计核心**: 控制 LLM 每步看到什么。这是系统中最重要的工程。
 
 ```python
-SYSTEM_PROMPT_TEMPLATE = """You are an autonomous web crawling agent. Your task is to extract structured data from websites.
+# System prompt 设计原则:
+# - 不包含硬编码工作流步骤（LLM 根据观察自行决定）
+# - 只说明角色、能力、约束
+# - 工具描述通过 tool schemas 传递，不在 prompt 重复
 
-## Your Capabilities
-You can use the following tools:
-{tool_descriptions}
-
+EXTRACTION_SYSTEM_PROMPT = """You are an autonomous web data extraction agent.
+You have access to browser tools and code execution capabilities.
 Your foundational ability is execute_code — you can write Python/bash/JS to solve any problem.
 The other tools are efficiency shortcuts for common operations.
 
-## Workflow
-1. Navigate to the target URL
-2. Analyze page structure (use analyze_page for quick insights)
-3. Choose extraction strategy (extract_css for structured pages, execute_code for complex cases, intercept_api for SPAs)
-4. Extract data
-5. Verify quality (use verify_quality)
-6. If quality insufficient, try a different strategy
-7. When done, respond with "DONE" + data summary
-
-## Constraints
-- Max {max_steps} steps
-- Prefer execute_code (most flexible), then extract_css (fastest)
-- For SPA pages, prefer intercept_api
-- On failure, switch strategy — do not repeat the same failing approach
+Goal: Extract structured data matching the specification below.
+When you've collected enough high-quality data, call save_data to store results.
 
 ## Current Task
 Target URL: {url}
 Requirement: {requirement}
 Understanding: {understanding}
-Success Criteria: {success_criteria}
 Target fields: {fields_or_none}
 Min items: {min_items}
 """
 
+EXPLORATION_SYSTEM_PROMPT = """You are an autonomous web exploration agent.
+Your task is to understand this website's structure and find pages relevant to the data requirement.
+Use your tools to navigate, analyze pages, and discover content patterns.
+
+## Current Task
+Target URL: {url}
+Requirement: {requirement}
+"""
+
+# 注意: 没有 "1. Navigate 2. Analyze 3. Extract" 这种硬编码流程
+# LLM 自己根据看到的页面内容决定下一步做什么
+
 class ContextManager:
-    def build(self, task, history, tools, nudges=None) -> list[dict]:
+    def build(self, task, history, tools_schema, nudges=None) -> list[dict]:
         messages = []
         
-        # 1. System prompt
+        # 1. System prompt (根据 role 选择 exploration 或 extraction)
         messages.append({
             "role": "system",
-            "content": self._render_system_prompt(task, tools)
+            "content": self._system_prompt(task)
         })
         
         # 2. 历史消息 (最近 N 步完整)
@@ -532,11 +540,11 @@ class ContextManager:
                     }
                 }]
             })
-            # tool result
+            # tool result — 15000 字符截断 (配合 HTML 清洗后足够看清页面结构)
             messages.append({
                 "role": "tool",
                 "tool_call_id": step.tool_call.id,
-                "content": self._truncate(step.result.content, max_chars=3000)
+                "content": self._truncate(step.result.content, max_chars=15000)
             })
         
         # 3. 更早历史的摘要 (如果有)

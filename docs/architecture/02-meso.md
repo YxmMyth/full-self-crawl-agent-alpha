@@ -201,6 +201,10 @@ class ToolRegistry:
     - schemas() 返回 OpenAI tools 格式 (type: "function")
     - execute() 按 name 查找并执行工具, 返回 JSON 字符串
     - 支持同步和异步函数
+    - _adapt_arguments(): 智能参数适配层 (ACI 防呆设计):
+      * 尝试原始参数调用 → 失败后检查 _raw fallback
+      * 支持 flat→nested 参数自动转换 (如 name+type → selector:{name, type})
+      * 错误信息包含自纠正提示
     """
     
     def register(self, name: str, func: Callable, description: str,
@@ -208,31 +212,23 @@ class ToolRegistry:
         """注册工具。parameters 遵循 JSON Schema 格式。"""
     
     def schemas(self) -> list[dict]:
-        """返回 OpenAI function calling 格式的 tools 列表。
-        
-        返回格式:
-        [
-            {
-                "type": "function",
-                "function": {
-                    "name": "navigate",
-                    "description": "Navigate to a URL...",
-                    "parameters": {
-                        "type": "object",
-                        "properties": {...},
-                        "required": [...]
-                    }
-                }
-            },
-            ...
-        ]
-        """
+        """返回 OpenAI function calling 格式的 tools 列表。"""
     
     async def execute(self, name: str, arguments: dict) -> str:
         """执行工具，返回 JSON 字符串结果。
         
-        如果函数是 async，await 它；否则在 executor 中运行。
-        异常被捕获并返回 {"error": str} 格式。
+        执行链: arguments → _adapt_arguments() → func(**adapted) → JSON 结果
+        异常被捕获并返回 {"error": str, "hint": str} 格式。
+        hint 字段帮助 LLM 自纠正参数错误 (Poka-yoke)。
+        """
+    
+    def _adapt_arguments(self, name: str, func: Callable, arguments: dict) -> dict:
+        """智能参数适配 (防呆层)
+        
+        1. 先尝试原始 arguments
+        2. 如果 TypeError → 检查 func 是否接受 _raw 参数 → 传 {"_raw": arguments}
+        3. 检查 flat→nested 转换 (如 LLM 传 {name: "x"} 但 func 期望 {selector: {name: "x"}})
+        4. 返回适配后的 arguments
         """
     
     def list_tools(self) -> list[str]:
@@ -259,8 +255,15 @@ class CrawlController:
     2. context.build() → messages (含历史 + 治理注入)
     3. llm.chat(messages, tools) → response
     4. 如果有 tool_calls: 逐个执行, 记入 history
+       - extract_css 结果自动追踪到 _collected_data
+       - save_data 调用时若无 data 参数，自动注入 _collected_data
     5. 如果 LLM 说完成 (stop + 无 tool_calls): 编译结果返回
     6. 回到 1
+    
+    数据追踪:
+    - _collected_data: list — 累积 extract_css 提取的数据
+    - _extract_css_data(): 从工具结果中提取 extract_css 的数据记录
+    - 当 save_data 被调用且 data 为空时，自动填充 _collected_data
     """
     
     def __init__(self, llm_client, tools: ToolRegistry, 
@@ -308,14 +311,11 @@ class ContextManager:
     2. task context: spec + 当前进度 (固定, ~300 tokens)
     3. compressed history: 最近 N 步完整 + 更早摘要 (~2000 tokens)
     4. governance nudges: 预算警告 / 行为修正 (可选, ~100 tokens)
-    5. current observation: 当前页面状态 (动态, ~2000 tokens)
-    
-    总预算: ~5000 tokens/step，留足空间给 LLM 回复 + tool schemas
     
     关键技术:
     - 历史压缩: 保留最近 3 步完整，更早的压缩为摘要
-    - HTML 截断: 页面 HTML 只保留前 N 字符 + 结构摘要
-    - Token 计数: 粗略估算 (中文 ~1.5 token/字，英文 ~0.3 token/word)
+    - 工具结果截断: 15000 字符上限 (配合 HTML 清洗，确保 LLM 看到有效内容)
+    - System prompt 不包含硬编码工作流 — LLM 自行决定步骤顺序
     """
     
     def __init__(self, max_history_steps: int = 3, max_tokens: int = 6000):
@@ -323,20 +323,18 @@ class ContextManager:
         self.max_tokens = max_tokens
     
     def build(self, task: dict, history: 'StepHistory', 
-              tools: list[dict], nudges: str | None = None) -> list[dict]:
+              tools_schema: list[dict], nudges: str | None = None) -> list[dict]:
         """构建完整的 messages 列表。"""
     
-    def _system_prompt(self, task: dict, tools: list[dict]) -> dict:
-        """构建 system message。"""
+    def _system_prompt(self, task: dict) -> dict:
+        """构建 system message。
+        
+        exploration role: 通用探索指引，不硬编码步骤
+        extraction role: 通用提取指引，不限制策略选择
+        """
     
     def _compress_history(self, history: 'StepHistory') -> list[dict]:
-        """压缩历史为 messages。最近 N 步完整，更早的摘要。"""
-    
-    def _summarize_old_steps(self, steps: list) -> str:
-        """将旧步骤压缩为文本摘要。"""
-    
-    def _truncate_html(self, html: str, max_chars: int = 5000) -> str:
-        """截断 HTML，保留结构。"""
+        """压缩历史为 messages。最近 N 步完整 (含 15000 字符截断)，更早的摘要。"""
 ```
 
 ### 2.4 management/governor.py — Governor
@@ -555,7 +553,7 @@ class Verifier:
 |------|------|------|-------------------|
 | `navigate` | `url: str` | 导航到 URL，自动等待加载 | 不处理认证/登录 (需 LLM 组合 fill+click) |
 | `go_back` | 无 | 浏览器后退 | 仅后退一步，无前进 |
-| `get_html` | `selector?: str` | 获取页面/元素 HTML | 大页面需截断 (>100KB)；不返回 shadow DOM |
+| `get_html` | `selector?: str` | 获取页面/元素 HTML (已清洗) | 自动去除 script/style/svg/noscript/注释；大页面截断至 15000 字符 |
 | `get_text` | 无 | 获取可见文本 (去 HTML 标签) | 丢失结构信息；适合快速预览，不适合精确提取 |
 | `click` | `selector: str` | 点击元素 | selector 必须唯一匹配；弹窗/overlay 可能遮挡 |
 | `fill` | `selector: str, value: str` | 填写输入框 | 只对 `<input>`/`<textarea>` 有效；不处理 `<select>` |
@@ -591,13 +589,14 @@ class Verifier:
 | Tool | 参数 | 能力 | 边界 |
 |------|------|------|------|
 | `analyze_page` | 无 (使用当前页面) | 页面结构分析: 类型(list/detail)、SPA 检测、分页类型、容器结构、反爬标志 | 基于启发式规则，非 100% 准确；复杂 SPA 可能误判 |
-| `analyze_links` | `goal?: str` | 提取+分类页面链接: same-domain 过滤、pagination 检测、sitemap 发现 | 不做链接内容预判；优先级排序需 LLM 补充 |
-| `search_page` | `pattern: str, regex?: bool` | 在页面文本中搜索内容，返回匹配位置+上下文 | 仅文本搜索，不理解语义；长页面定位特定内容很有用 |
+| `analyze_links` | 无 (使用当前页面) | 提取+分类页面链接: same-domain 过滤、pagination 检测、sitemap 发现 | 不做链接内容预判；优先级排序需 LLM 补充。注册时过滤未知 kwargs |
+| `search_page` | `query: str, regex?: bool` | 在页面文本中搜索内容，返回匹配位置+上下文 | 仅文本搜索，不理解语义；长页面定位特定内容很有用 |
 
 **设计决策**:
 - ❌ 旧版 `detect_spa` 合并入 `analyze_page`
 - `analyze_page` 无需参数——自动使用当前 browser 页面
-- `search_page` 参考 browser-use 的 SearchPageAction，在长页面中定位数据区域
+- `analyze_links` 注册时对 LLM 传入的未知参数做 filter（而非崩溃），提升 Poka-yoke 防呆性
+- `search_page` 参数名为 `query`（非 `pattern`），与函数签名一致
 
 ### 3.4 Execution 能力域 — (见 §3.0 架构根基)
 
