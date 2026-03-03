@@ -25,6 +25,13 @@ def setup_logging(level: str = "INFO") -> None:
 
 
 async def main():
+    # Load .env early
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(
         description="Full-Self-Crawl-Agent Alpha — LLM-as-Controller web crawling agent"
     )

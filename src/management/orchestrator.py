@@ -12,9 +12,25 @@ import json
 import logging
 import os
 import uuid
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger("management.orchestrator")
+
+
+def _load_settings(config_path: str = "config/settings.json") -> dict:
+    """Load settings.json and resolve env var placeholders like ${VAR}."""
+    import re
+    path = Path(config_path)
+    if not path.exists():
+        return {}
+    with open(path, "r", encoding="utf-8") as f:
+        text = f.read()
+    # Replace ${VAR} with env var values
+    def _replace(m):
+        return os.environ.get(m.group(1), "")
+    text = re.sub(r"\$\{(\w+)\}", _replace, text)
+    return json.loads(text)
 
 
 class Orchestrator:
@@ -29,7 +45,20 @@ class Orchestrator:
     """
 
     def __init__(self, config: dict | None = None):
-        self.config = config or {}
+        # Auto-load .env file
+        try:
+            from dotenv import load_dotenv
+            load_dotenv()
+        except ImportError:
+            pass  # dotenv optional; env vars can be set manually
+
+        # Merge: file settings < explicit config
+        file_settings = _load_settings()
+        self.config = {**file_settings, **(config or {})}
+        # Merge nested llm config
+        if "llm" in file_settings and "llm" in (config or {}):
+            self.config["llm"] = {**file_settings["llm"], **(config or {}).get("llm", {})}
+
         self._browser = None
         self._llm = None
         self._tools = None
@@ -98,8 +127,8 @@ class Orchestrator:
         llm_config = self.config.get("llm", {})
         self._llm = LLMClient(
             api_key=llm_config.get("api_key", os.environ.get("LLM_API_KEY", "")),
-            base_url=llm_config.get("base_url", os.environ.get("LLM_BASE_URL", "")),
-            model=llm_config.get("model", "claude-opus-4-5"),
+            base_url=llm_config.get("api_base", llm_config.get("base_url", os.environ.get("LLM_BASE_URL", ""))),
+            model=llm_config.get("model", os.environ.get("LLM_MODEL", "claude-opus-4-5")),
         )
 
         self._browser = BrowserTool()
