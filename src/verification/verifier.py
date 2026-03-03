@@ -177,11 +177,17 @@ class RiskMonitor:
         return len(self._errors) / self._total_actions
 
     def is_critical(self) -> bool:
-        """Check if error levels have reached critical thresholds."""
-        return (
-            self.error_count >= self.error_threshold
-            or self.error_rate >= self.error_rate_threshold
-        )
+        """Check if error levels have reached critical thresholds.
+        
+        Requires minimum 5 actions before error rate check to avoid
+        premature stops from early tool call mistakes (LLMs self-correct).
+        """
+        if self.error_count >= self.error_threshold:
+            return True
+        # Only check error rate after enough samples
+        if self._total_actions >= 5 and self.error_rate >= self.error_rate_threshold:
+            return True
+        return False
 
     def get_recent_errors(self, n: int = 5) -> list[dict]:
         return self._errors[-n:]

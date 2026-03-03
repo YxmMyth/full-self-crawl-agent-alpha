@@ -71,9 +71,16 @@ class TestRiskMonitor:
 
     def test_error_rate_threshold(self):
         rm = RiskMonitor(error_rate_threshold=0.5)
+        # Below min sample size (5) — should NOT be critical even at 50% error rate
         rm.record_action(True, "a")
         rm.record_action(False, "b", "err")
         assert rm.error_rate == 0.5
+        assert not rm.is_critical()  # only 2 actions, need >=5
+        # Add more actions to reach min sample
+        rm.record_action(False, "c", "err")
+        rm.record_action(False, "d", "err")
+        rm.record_action(True, "e")
+        # Now 5 actions, 3/5 = 60% error rate >= 50% threshold
         assert rm.is_critical()
 
     def test_get_recent_errors(self):
