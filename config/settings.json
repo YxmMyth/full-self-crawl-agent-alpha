@@ -7,7 +7,7 @@
 
   "llm": {
     "model": "claude-opus-4-5-20251101",
-    "api_key": "sk-j8qM9nlrE3cpu3mw1wjoGpVBxjDCzmuUGTgEMNhPlpo5Zesb",
+    "api_key": "${LLM_API_KEY}",
     "api_base": "http://45.78.224.156:3000/v1",
     "timeout": 60,
     "max_tokens": 1024,
