@@ -127,12 +127,12 @@ class Orchestrator:
         llm_config = self.config.get("llm", {})
         self._llm = LLMClient(
             api_key=llm_config.get("api_key", os.environ.get("LLM_API_KEY", "")),
-            base_url=llm_config.get("api_base", llm_config.get("base_url", os.environ.get("LLM_BASE_URL", ""))),
+            api_base=llm_config.get("api_base", llm_config.get("base_url", os.environ.get("LLM_BASE_URL", ""))),
             model=llm_config.get("model", os.environ.get("LLM_MODEL", "claude-opus-4-5")),
         )
 
         self._browser = BrowserTool()
-        await self._browser.launch()
+        await self._browser.start()
 
     def _build_tools(self):
         """Register all 20 tools into a ToolRegistry."""
@@ -182,18 +182,18 @@ class Orchestrator:
             "Scroll the page in a direction",
             {"type": "object", "properties": {"direction": {"type": "string", "enum": ["down", "up"], "description": "Scroll direction"}, "pages": {"type": "number", "description": "Number of pages to scroll (default 1)"}}, "required": ["direction"]})
 
-        registry.register("screenshot", browser.screenshot,
+        registry.register("screenshot", browser.take_screenshot,
             "Take a screenshot of the current page",
             {"type": "object", "properties": {"full_page": {"type": "boolean", "description": "Capture full page (default false)"}}})
 
-        registry.register("evaluate_js", browser.evaluate_js,
+        registry.register("evaluate_js", browser.evaluate,
             "Execute JavaScript in the page context and return result",
             {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}}, "required": ["script"]})
 
         # --- Extraction tools (2) ---
         registry.register("extract_css", lambda **kwargs: extract_with_css(browser, **kwargs),
-            "Extract data using CSS selectors from the current page",
-            {"type": "object", "properties": {"selectors": {"type": "object", "description": "Map of field_name -> CSS selector"}, "container": {"type": "string", "description": "Optional container selector for list extraction"}}, "required": ["selectors"]})
+            'Extract data using CSS selectors. Example: selectors={"title": "h1", "price": ".price"} extracts text from matching elements. Add container for repeating items (e.g., container=".product" to get a list).',
+            {"type": "object", "properties": {"selectors": {"type": "object", "description": 'JSON object mapping field names to CSS selectors. Example: {"title": "h3 a", "price": ".price_color"}'}, "container": {"type": "string", "description": "CSS selector for repeating container element. When set, returns a list of items."}}, "required": ["selectors"]})
 
         registry.register("intercept_api", lambda **kwargs: intercept_api(browser, **kwargs),
             "Intercept API/XHR responses matching a URL pattern",
@@ -215,8 +215,8 @@ class Orchestrator:
         # --- Execution (1) ---
         is_docker = os.path.exists("/.dockerenv")
         registry.register("execute_code", execute_code,
-            "Execute code (Python always available; bash/JS in Docker)",
-            {"type": "object", "properties": {"code": {"type": "string", "description": "Code to execute"}, "language": {"type": "string", "enum": ["python", "bash", "javascript"] if is_docker else ["python"], "description": "Programming language"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}}, "required": ["code"]})
+            'Execute code in a subprocess and return stdout/stderr. The "code" param is a string of source code.',
+            {"type": "object", "properties": {"code": {"type": "string", "description": "Source code string to execute"}, "language": {"type": "string", "enum": ["python", "bash", "javascript"] if is_docker else ["python"], "description": "Programming language (default: python)"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}}, "required": ["code"]})
 
         # --- Verification (1) ---
         registry.register("verify_quality", verify_quality_tool,
@@ -393,17 +393,27 @@ class Orchestrator:
 
     async def _save_data_tool(self, data: list, format: str = "json") -> dict:
         """Tool: save extracted data."""
+        import os
         from ..tools.storage import DataExport
         exporter = DataExport()
-        path = exporter.save(data, format=format)
-        return {"saved": len(data), "path": str(path), "format": format}
+        os.makedirs("./evidence", exist_ok=True)
+        filepath = f"./evidence/extracted_data.{format}"
+        if format == "csv":
+            exporter.to_csv(data, filepath)
+        else:
+            exporter.to_json(data, filepath)
+        return {"saved": len(data), "path": filepath, "format": format}
 
     async def _download_file_tool(self, url: str, filename: str = "") -> dict:
         """Tool: download a file."""
         from ..tools.downloader import FileDownloader
         downloader = FileDownloader()
-        path = await downloader.download(url, filename=filename or None)
-        return {"downloaded": str(path), "url": url}
+        # Infer file_type from URL
+        from urllib.parse import urlparse
+        path = urlparse(url).path
+        ext = path.rsplit(".", 1)[-1] if "." in path else "bin"
+        result = downloader.download(url, file_type=ext, filename=filename or None)
+        return result
 
     async def cleanup(self) -> None:
         """Release resources."""

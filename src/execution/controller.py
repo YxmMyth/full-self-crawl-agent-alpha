@@ -192,11 +192,17 @@ class CrawlController:
     async def _execute_tool(self, tool_call: ToolCall) -> ToolResult:
         """Execute a tool call and return the result."""
         try:
-            result_str = await self.tools.execute(tool_call.name, tool_call.arguments)
+            result = await self.tools.execute(tool_call.name, tool_call.arguments)
+            # Registry returns dict {success, result, error}
+            success = result.get("success", True)
+            if success:
+                content = json.dumps(result.get("result"), default=str, ensure_ascii=False)
+            else:
+                content = json.dumps({"error": result.get("error", "Unknown error")})
             return ToolResult(
                 tool_call_id=tool_call.id,
-                content=result_str,
-                success=not self._is_error_result(result_str),
+                content=content,
+                success=success,
             )
         except Exception as e:
             logger.error(f"Tool execution error ({tool_call.name}): {e}")

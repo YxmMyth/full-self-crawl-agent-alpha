@@ -5,6 +5,7 @@ The registry maps tool names to callables and generates OpenAI-compatible
 function calling schemas for LLM consumption.
 """
 
+import asyncio
 import json
 import logging
 import traceback
@@ -60,7 +61,12 @@ class ToolRegistry:
             logger.warning(f"Tool '{name}' already registered, overwriting")
 
         params = parameters or {}
-        if required is None:
+        # If caller passed a full JSON Schema object, extract properties/required
+        if params.get("type") == "object" and "properties" in params:
+            if required is None:
+                required = params.get("required", list(params["properties"].keys()))
+            params = params["properties"]
+        elif required is None:
             required = list(params.keys())
 
         self._tools[name] = ToolDef(
@@ -128,14 +134,34 @@ class ToolRegistry:
             }
 
         try:
-            result = await tool.fn(**arguments)
+            # Filter arguments to only known parameters (LLMs sometimes hallucinate extra params)
+            known_params = set(tool.parameters.keys())
+            if known_params:
+                filtered_args = {k: v for k, v in arguments.items() if k in known_params}
+            else:
+                filtered_args = arguments
+
+            if asyncio.iscoroutinefunction(tool.fn):
+                result = await tool.fn(**filtered_args)
+            else:
+                result = tool.fn(**filtered_args)
+                if asyncio.iscoroutine(result):
+                    result = await result
             return {"success": True, "result": result, "error": None}
         except TypeError as e:
-            logger.error(f"Tool '{name}' argument error: {e}")
+            # Build a helpful error message for LLM self-correction
+            missing_hint = ""
+            if "missing" in str(e) and "argument" in str(e):
+                required = tool.required
+                provided = list(arguments.keys())
+                missing = [r for r in required if r not in arguments]
+                if missing:
+                    missing_hint = f" Required params: {required}. Missing: {missing}. You provided: {provided}."
+            logger.error(f"Tool '{name}' argument error: {e}{missing_hint}")
             return {
                 "success": False,
                 "result": None,
-                "error": f"Invalid arguments for {name}: {e}",
+                "error": f"Invalid arguments for {name}: {e}.{missing_hint}",
             }
         except Exception as e:
             logger.error(f"Tool '{name}' execution error: {e}\n{traceback.format_exc()}")
