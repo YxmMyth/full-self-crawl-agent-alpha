@@ -1,0 +1,44 @@
+services:
+  # Development: mount source, interactive shell
+  dev:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+      - /app/__pycache__
+      - playwright-cache:/home/crawler/.cache
+    env_file: .env
+    environment:
+      - BROWSER_HEADLESS=true
+      - DOCKER_CONTAINER=1
+    working_dir: /app
+    stdin_open: true
+    tty: true
+
+  # Production: code baked in, run task via CLI
+  agent:
+    build:
+      context: .
+      target: production
+    env_file: .env
+    environment:
+      - BROWSER_HEADLESS=true
+      - DOCKER_CONTAINER=1
+    volumes:
+      - agent-output:/workspace
+
+  # One-shot test runner
+  test:
+    build:
+      context: .
+      target: dev
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    env_file: .env
+    command: ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
+
+volumes:
+  playwright-cache:
+  agent-output:

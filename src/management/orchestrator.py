@@ -52,12 +52,16 @@ class Orchestrator:
         except ImportError:
             pass  # dotenv optional; env vars can be set manually
 
-        # Merge: file settings < explicit config
+        # Merge: file settings < explicit config (skip empty/falsy overrides)
         file_settings = _load_settings()
         self.config = {**file_settings, **(config or {})}
-        # Merge nested llm config
+        # Merge nested llm config, but don't let empty strings override real values
         if "llm" in file_settings and "llm" in (config or {}):
-            self.config["llm"] = {**file_settings["llm"], **(config or {}).get("llm", {})}
+            merged_llm = {**file_settings["llm"]}
+            for k, v in (config or {}).get("llm", {}).items():
+                if v:  # only override if value is truthy (non-empty)
+                    merged_llm[k] = v
+            self.config["llm"] = merged_llm
 
         self._browser = None
         self._llm = None
