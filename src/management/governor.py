@@ -1,0 +1,164 @@
+"""
+Management: Governor — LLM behavior governance.
+
+The Governor doesn't choose strategies or make decisions for the LLM.
+It monitors behavior and intervenes only when things go wrong:
+- Budget exhaustion → force stop
+- Loop detection → nudge to try different approach
+- Time limit → force stop
+- Completion gate passed → nudge to finish
+"""
+
+import logging
+import time
+from typing import Any
+
+logger = logging.getLogger("management.governor")
+
+
+class Governor:
+    """LLM behavior governance engine.
+
+    Intervention modes:
+    - Nudge (soft): Inject text into system message to guide LLM
+    - Force stop (hard): should_stop() returns reason, loop terminates
+
+    Merged from old: MetaController monitoring + RiskMonitor + Pipeline error limits.
+    """
+
+    def __init__(
+        self,
+        max_steps: int = 30,
+        max_llm_calls: int = 20,
+        max_time_seconds: int = 300,
+        gate=None,
+        monitor=None,
+    ):
+        self.max_steps = max_steps
+        self.max_llm_calls = max_llm_calls
+        self.max_time_seconds = max_time_seconds
+        self.gate = gate  # CompletionGate
+        self.monitor = monitor  # RiskMonitor
+
+        self._llm_calls = 0
+        self._total_tokens = 0
+        self._start_time: float | None = None
+
+    def start(self) -> None:
+        """Mark the start of execution."""
+        self._start_time = time.time()
+        self._llm_calls = 0
+        self._total_tokens = 0
+
+    def record_llm_call(self, tokens: int = 0) -> None:
+        """Record an LLM API call."""
+        self._llm_calls += 1
+        self._total_tokens += tokens
+
+    def should_stop(self, history) -> str | None:
+        """Check if execution should be force-stopped.
+
+        Returns:
+            Reason string if should stop, None if should continue.
+        """
+        # Step limit
+        if history.count >= self.max_steps:
+            return f"Step limit reached ({self.max_steps})"
+
+        # LLM call limit
+        if self._llm_calls >= self.max_llm_calls:
+            return f"LLM call limit reached ({self.max_llm_calls})"
+
+        # Time limit
+        if self._start_time:
+            elapsed = time.time() - self._start_time
+            if elapsed >= self.max_time_seconds:
+                return f"Time limit reached ({self.max_time_seconds}s)"
+
+        # Critical error rate
+        if self.monitor and self.monitor.is_critical():
+            stats = self.monitor.get_stats()
+            return f"Critical error rate: {stats['error_rate']:.0%} ({stats['error_count']} errors)"
+
+        # Loop detection (same tool+args 3 times in a row, all failed)
+        if history.count >= 3 and history.last_n_same_tool(3):
+            recent = history.recent(3)
+            if all(not s.succeeded for s in recent):
+                return f"Stuck in loop: {recent[0].tool_name} failed 3 consecutive times with same args"
+
+        return None
+
+    def get_nudges(self, history, data: list[dict] | None = None,
+                   spec=None) -> str | None:
+        """Generate governance nudges for the LLM.
+
+        Returns text to inject into system message, or None.
+        """
+        nudges = []
+
+        # Budget warning (>70%)
+        if self._llm_calls > 0:
+            usage_pct = self._llm_calls / self.max_llm_calls
+            if usage_pct >= 0.7:
+                nudges.append(
+                    f"⚠️ Budget: {self._llm_calls}/{self.max_llm_calls} LLM calls used "
+                    f"({usage_pct:.0%}). Wrap up soon."
+                )
+
+        # Time warning (>70%)
+        if self._start_time:
+            elapsed = time.time() - self._start_time
+            time_pct = elapsed / self.max_time_seconds
+            if time_pct >= 0.7:
+                mins = int(elapsed / 60)
+                max_mins = int(self.max_time_seconds / 60)
+                nudges.append(
+                    f"⚠️ Time: {mins}min/{max_mins}min elapsed. "
+                    f"Prioritize saving current results."
+                )
+
+        # Loop detection (soft — same tool 2 times, not necessarily failed)
+        if history.count >= 2 and history.last_n_same_tool(2):
+            recent = history.recent(2)
+            tool = recent[0].tool_name
+            if not recent[-1].succeeded:
+                nudges.append(
+                    f"⚠️ {tool} failed twice with same args. "
+                    f"Try a different approach (execute_code, different selectors, etc.)."
+                )
+
+        # Completion gate
+        if self.gate and data is not None and spec:
+            decision = self.gate.check(data, spec)
+            if decision.met:
+                nudges.append(
+                    f"✅ Completion criteria met: {decision.reason}. "
+                    f"You may finish now."
+                )
+
+        # Error rate warning
+        if self.monitor:
+            stats = self.monitor.get_stats()
+            if stats["error_rate"] >= 0.3 and stats["total_actions"] >= 3:
+                nudges.append(
+                    f"⚠️ High error rate: {stats['error_rate']:.0%}. "
+                    f"Consider changing strategy."
+                )
+
+        return "\n".join(nudges) if nudges else None
+
+    @property
+    def elapsed_seconds(self) -> float:
+        if self._start_time is None:
+            return 0.0
+        return time.time() - self._start_time
+
+    def get_stats(self) -> dict:
+        return {
+            "llm_calls": self._llm_calls,
+            "total_tokens": self._total_tokens,
+            "elapsed_seconds": round(self.elapsed_seconds, 1),
+            "max_steps": self.max_steps,
+            "max_llm_calls": self.max_llm_calls,
+            "max_time_seconds": self.max_time_seconds,
+        }
