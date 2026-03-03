@@ -146,8 +146,8 @@ Rules:
             })
             # Tool result message
             result_content = step.result.content
-            if len(result_content) > 3000:
-                result_content = result_content[:3000] + "\n... (truncated)"
+            if len(result_content) > 15000:
+                result_content = result_content[:15000] + "\n... (truncated)"
             messages.append({
                 "role": "tool",
                 "tool_call_id": step.result.tool_call_id,

@@ -109,6 +109,12 @@ class CrawlController:
                 # 5. Execute tool calls
                 for tc in decision.tool_calls:
                     self._step_number += 1
+
+                    # Auto-inject accumulated data if save_data called without data
+                    if tc.name == "save_data" and "data" not in tc.arguments and self._collected_data:
+                        tc.arguments["data"] = self._collected_data
+                        logger.info(f"Auto-injected {len(self._collected_data)} records into save_data")
+
                     result = await self._execute_tool(tc)
 
                     self.history.record(self._step_number, tc, result)
@@ -120,6 +126,10 @@ class CrawlController:
                             action_name=tc.name,
                             error=result.content if not result.success else None,
                         )
+
+                    # Collect data from extract_css results
+                    if tc.name == "extract_css" and result.success:
+                        self._extract_css_data(result.content)
 
                     # Collect data from save_data calls
                     if tc.name == "save_data" and result.success:
@@ -221,6 +231,18 @@ class CrawlController:
         except (json.JSONDecodeError, TypeError):
             pass
         return False
+
+    def _extract_css_data(self, result_content: str) -> None:
+        """Extract records from extract_css result into collected data."""
+        try:
+            data = json.loads(result_content)
+            if isinstance(data, dict):
+                records = data.get("records", [])
+                if records:
+                    self._collected_data.extend(records)
+                    logger.debug(f"Collected {len(records)} records from extract_css")
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     def _extract_saved_data(self, args: dict) -> None:
         """Extract data from save_data tool arguments."""

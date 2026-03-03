@@ -11,6 +11,7 @@ Two modes:
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
 from typing import Any
@@ -158,9 +159,9 @@ class Orchestrator:
             "Go back to the previous page",
             {"type": "object", "properties": {}})
 
-        registry.register("get_html", browser.get_html,
-            "Get page HTML or specific element HTML",
-            {"type": "object", "properties": {"selector": {"type": "string", "description": "Optional CSS selector"}}})
+        registry.register("get_html", self._get_clean_html,
+            "Get page HTML (cleaned: no scripts/styles). Use selector param to scope to a specific element for smaller output.",
+            {"type": "object", "properties": {"selector": {"type": "string", "description": "Optional CSS selector to scope HTML (e.g. 'body', '.main-content', '#results')"}}})
 
         registry.register("get_text", browser.get_text,
             "Get visible text content of the page",
@@ -394,6 +395,21 @@ class Orchestrator:
         )
 
         return await controller.run(task)
+
+    async def _get_clean_html(self, selector: str | None = None) -> str:
+        """Get page HTML with noise removed (scripts, styles, comments)."""
+        raw = await self._browser.get_html(selector)
+        # Remove script, style, svg, noscript tags and their contents
+        cleaned = re.sub(r'<(script|style|svg|noscript)[^>]*>.*?</\1>', '', raw, flags=re.DOTALL | re.IGNORECASE)
+        # Remove HTML comments
+        cleaned = re.sub(r'<!--.*?-->', '', cleaned, flags=re.DOTALL)
+        # Remove common noise attributes (data-*, onclick, style, class with long hashes)
+        cleaned = re.sub(r'\s+(data-[\w-]+|onclick|onload|onerror)="[^"]*"', '', cleaned)
+        cleaned = re.sub(r'\s+style="[^"]*"', '', cleaned)
+        # Collapse whitespace
+        cleaned = re.sub(r'\s{2,}', ' ', cleaned)
+        cleaned = re.sub(r'>\s+<', '>\n<', cleaned)
+        return cleaned.strip()
 
     async def _save_data_tool(self, data: list, format: str = "json") -> dict:
         """Tool: save extracted data."""

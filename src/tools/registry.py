@@ -118,12 +118,34 @@ class ToolRegistry:
     def _adapt_arguments(self, tool: ToolDef, arguments: dict[str, Any]) -> dict[str, Any]:
         """Adapt LLM arguments to match tool schema.
 
-        LLMs often flatten nested object params. For example, extract_css expects
-        {"selectors": {"title": "h3 a"}} but LLM sends {"title": "h3 a", "container": "..."}.
-        This detects the pattern and auto-wraps unknown string params into the
-        expected object parameter.
+        Handles two common LLM mistakes:
+        1. Flattening nested objects: extract_css gets {"title": "h3 a"} instead of {"selectors": {"title": "h3 a"}}
+        2. JSON parse failures: LLM sends malformed JSON → _raw fallback needs remapping
         """
         known_params = set(tool.parameters.keys())
+
+        # Handle _raw fallback from JSON parse failure in LLM client
+        if "_raw" in arguments and "_raw" not in known_params:
+            raw_val = arguments["_raw"]
+            # Try to re-parse as JSON (sometimes just whitespace/encoding issue)
+            if isinstance(raw_val, str):
+                try:
+                    import json
+                    parsed = json.loads(raw_val)
+                    if isinstance(parsed, dict):
+                        logger.info(f"Recovered _raw JSON for '{tool.name}'")
+                        return parsed
+                except (json.JSONDecodeError, TypeError):
+                    pass
+                # Map _raw to the first required string param
+                for pname in tool.required:
+                    pschema = tool.parameters.get(pname, {})
+                    if pschema.get("type") == "string" and pname not in arguments:
+                        logger.info(f"Mapped _raw to '{pname}' for '{tool.name}'")
+                        adapted = {k: v for k, v in arguments.items() if k != "_raw"}
+                        adapted[pname] = raw_val
+                        return adapted
+
         unknown_args = {k: v for k, v in arguments.items() if k not in known_params}
 
         if not unknown_args:
@@ -139,7 +161,6 @@ class ToolRegistry:
                 break
 
         if object_param and unknown_args:
-            # Collect unknown args into the missing object param
             adapted = {k: v for k, v in arguments.items() if k in known_params}
             adapted[object_param] = unknown_args
             logger.info(
@@ -195,6 +216,13 @@ class ToolRegistry:
                 missing = [r for r in required if r not in arguments]
                 if missing:
                     missing_hint = f" Required params: {required}. Missing: {missing}. You provided: {provided}."
+                    # Add usage example for common tools
+                    examples = {
+                        "extract_css": ' Example: extract_css(selectors={"title": "h3 a", "price": ".price_color"}, container=".product")',
+                        "save_data": ' Example: save_data(data=[{"title": "...", "price": "..."}], format="json")',
+                    }
+                    if name in examples:
+                        missing_hint += examples[name]
             logger.error(f"Tool '{name}' argument error: {e}{missing_hint}")
             return {
                 "success": False,

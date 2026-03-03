@@ -157,3 +157,38 @@ class TestRegistryArgumentAdaptation:
         })
         assert result["success"]
         assert result["result"]["selectors"] == {"title": "h3 a", "price": ".price_color"}
+
+
+class TestRegistryRawFallback:
+    """Test _raw JSON parse failure recovery."""
+
+    def _make_code_registry(self):
+        reg = ToolRegistry()
+        async def fake_execute(code: str, language: str = "python"):
+            return {"code": code, "language": language}
+        reg.register("execute_code", fake_execute,
+            "Execute code",
+            {"type": "object", "properties": {
+                "code": {"type": "string", "description": "Source code"},
+                "language": {"type": "string", "description": "Language"},
+            }, "required": ["code"]})
+        return reg
+
+    @pytest.mark.asyncio
+    async def test_raw_fallback_mapped_to_code(self):
+        """JSON parse failure produces _raw — should map to first required string param."""
+        reg = self._make_code_registry()
+        result = await reg.execute("execute_code", {"_raw": "print('hello world')"})
+        assert result["success"]
+        assert result["result"]["code"] == "print('hello world')"
+
+    @pytest.mark.asyncio
+    async def test_raw_valid_json_recovered(self):
+        """_raw contains valid JSON — should be parsed and used directly."""
+        reg = self._make_code_registry()
+        result = await reg.execute("execute_code", {
+            "_raw": '{"code": "x = 1", "language": "python"}',
+        })
+        assert result["success"]
+        assert result["result"]["code"] == "x = 1"
+        assert result["result"]["language"] == "python"
