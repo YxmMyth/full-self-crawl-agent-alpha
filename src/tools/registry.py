@@ -115,6 +115,41 @@ class ToolRegistry:
             result.append(schema)
         return result
 
+    def _adapt_arguments(self, tool: ToolDef, arguments: dict[str, Any]) -> dict[str, Any]:
+        """Adapt LLM arguments to match tool schema.
+
+        LLMs often flatten nested object params. For example, extract_css expects
+        {"selectors": {"title": "h3 a"}} but LLM sends {"title": "h3 a", "container": "..."}.
+        This detects the pattern and auto-wraps unknown string params into the
+        expected object parameter.
+        """
+        known_params = set(tool.parameters.keys())
+        unknown_args = {k: v for k, v in arguments.items() if k not in known_params}
+
+        if not unknown_args:
+            return arguments
+
+        # Find if there's a required object-type parameter that's missing
+        object_param = None
+        for pname, pschema in tool.parameters.items():
+            if (pschema.get("type") == "object"
+                    and pname in tool.required
+                    and pname not in arguments):
+                object_param = pname
+                break
+
+        if object_param and unknown_args:
+            # Collect unknown args into the missing object param
+            adapted = {k: v for k, v in arguments.items() if k in known_params}
+            adapted[object_param] = unknown_args
+            logger.info(
+                f"Auto-adapted flat args into '{object_param}': "
+                f"{list(unknown_args.keys())}"
+            )
+            return adapted
+
+        return arguments
+
     async def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
         """Execute a tool by name.
 
@@ -134,6 +169,9 @@ class ToolRegistry:
             }
 
         try:
+            # Adapt arguments (fix common LLM flattening of nested objects)
+            arguments = self._adapt_arguments(tool, arguments)
+
             # Filter arguments to only known parameters (LLMs sometimes hallucinate extra params)
             known_params = set(tool.parameters.keys())
             if known_params:

@@ -1,11 +1,12 @@
 """
-Unit tests for execution layer: actions, history.
+Unit tests for execution layer: actions, history, registry.
 """
 
 import json
 import pytest
 from src.execution.actions import ToolCall, ToolResult, Step, LLMDecision
 from src.execution.history import StepHistory
+from src.tools.registry import ToolRegistry
 
 
 class TestToolCall:
@@ -105,3 +106,54 @@ class TestStepHistory:
         summary = h.summarize_old_steps(2)
         assert "Previous 3 steps" in summary
         assert "navigate" in summary
+
+
+class TestRegistryArgumentAdaptation:
+    """Test that registry auto-adapts flattened LLM args into nested objects."""
+
+    def _make_registry(self):
+        reg = ToolRegistry()
+        # Register extract_css-like tool with nested object param
+        async def fake_extract(selectors: dict, container: str = None):
+            return {"selectors": selectors, "container": container}
+        reg.register("extract_css", fake_extract,
+            "Extract data using CSS selectors",
+            {"type": "object", "properties": {
+                "selectors": {"type": "object", "description": "Field→selector mapping"},
+                "container": {"type": "string", "description": "Container selector"},
+            }, "required": ["selectors"]})
+        return reg
+
+    @pytest.mark.asyncio
+    async def test_correct_args_pass_through(self):
+        reg = self._make_registry()
+        result = await reg.execute("extract_css", {
+            "selectors": {"title": "h3 a", "price": ".price"},
+            "container": ".product",
+        })
+        assert result["success"]
+        assert result["result"]["selectors"] == {"title": "h3 a", "price": ".price"}
+
+    @pytest.mark.asyncio
+    async def test_flat_args_auto_adapted(self):
+        """LLM sends flat args — registry should auto-wrap into selectors."""
+        reg = self._make_registry()
+        result = await reg.execute("extract_css", {
+            "title": "h3 a",
+            "price": ".price_color",
+            "container": ".product",
+        })
+        assert result["success"]
+        assert result["result"]["selectors"] == {"title": "h3 a", "price": ".price_color"}
+        assert result["result"]["container"] == ".product"
+
+    @pytest.mark.asyncio
+    async def test_flat_args_without_container(self):
+        """LLM sends only selector fields, no container."""
+        reg = self._make_registry()
+        result = await reg.execute("extract_css", {
+            "title": "h3 a",
+            "price": ".price_color",
+        })
+        assert result["success"]
+        assert result["result"]["selectors"] == {"title": "h3 a", "price": ".price_color"}
