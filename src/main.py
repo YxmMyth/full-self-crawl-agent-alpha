@@ -1,0 +1,104 @@
+"""
+Full-Self-Crawl-Agent Alpha — Entry Point
+
+Usage:
+    python -m src.main <url> [--requirement "..."] [--mode full_site|single_page]
+
+Example:
+    python -m src.main https://books.toscrape.com --requirement "Extract all book titles, prices, and ratings"
+"""
+
+import argparse
+import asyncio
+import json
+import logging
+import sys
+from pathlib import Path
+
+
+def setup_logging(level: str = "INFO") -> None:
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s [%(name)s] %(levelname)s: %(message)s",
+        datefmt="%H:%M:%S",
+    )
+
+
+async def main():
+    parser = argparse.ArgumentParser(
+        description="Full-Self-Crawl-Agent Alpha — LLM-as-Controller web crawling agent"
+    )
+    parser.add_argument("url", help="Target URL to crawl")
+    parser.add_argument("--requirement", "-r", default="",
+                        help="Natural language description of what to extract")
+    parser.add_argument("--mode", "-m", default="full_site",
+                        choices=["full_site", "single_page"],
+                        help="Crawl mode (default: full_site)")
+    parser.add_argument("--model", default="claude-opus-4-5",
+                        help="LLM model to use")
+    parser.add_argument("--api-key", default="",
+                        help="LLM API key (or set LLM_API_KEY env var)")
+    parser.add_argument("--base-url", default="",
+                        help="LLM API base URL (or set LLM_BASE_URL env var)")
+    parser.add_argument("--output", "-o", default="output.json",
+                        help="Output file path (default: output.json)")
+    parser.add_argument("--log-level", default="INFO",
+                        choices=["DEBUG", "INFO", "WARNING", "ERROR"])
+    parser.add_argument("--max-steps", type=int, default=30,
+                        help="Max steps per controller loop")
+    parser.add_argument("--max-time", type=int, default=300,
+                        help="Max time in seconds per controller loop")
+
+    args = parser.parse_args()
+    setup_logging(args.log_level)
+    logger = logging.getLogger("main")
+
+    logger.info(f"Starting crawl: {args.url}")
+    logger.info(f"Mode: {args.mode}, Model: {args.model}")
+
+    from .management.orchestrator import Orchestrator
+
+    config = {
+        "llm": {
+            "api_key": args.api_key,
+            "base_url": args.base_url,
+            "model": args.model,
+        },
+        "max_steps": args.max_steps,
+        "max_time": args.max_time,
+    }
+
+    orchestrator = Orchestrator(config=config)
+
+    try:
+        result = await orchestrator.run(
+            start_url=args.url,
+            requirement=args.requirement,
+            mode=args.mode,
+        )
+
+        # Save output
+        output_path = Path(args.output)
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(result, f, indent=2, ensure_ascii=False, default=str)
+
+        logger.info(f"Results saved to {output_path}")
+
+        # Print summary
+        if result.get("success"):
+            print(f"\n✅ Success: {len(result.get('data', []))} records extracted")
+        else:
+            print(f"\n❌ Failed: {result.get('error', result.get('stop_reason', 'Unknown'))}")
+
+        if result.get("summary"):
+            print(f"Summary: {result['summary']}")
+
+        return 0 if result.get("success") else 1
+
+    except KeyboardInterrupt:
+        logger.info("Interrupted by user")
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(asyncio.run(main()))
