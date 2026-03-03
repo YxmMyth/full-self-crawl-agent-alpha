@@ -1,0 +1,37 @@
+{
+    "llm_settings": {
+        "max_tokens": 1024,
+        "temperature": 0.7,
+        "top_p": 0.7,
+        "model": "glm-4"
+    },
+    "execution_settings": {
+        "max_retries": 3,
+        "max_iterations": 10,
+        "timeout_seconds": 30,
+        "browser_timeout_seconds": 30
+    },
+    "quality_thresholds": {
+        "min_quality_score": 0.6,
+        "min_sample_count": 5
+    },
+    "risk_thresholds": {
+        "max_memory_mb": 512,
+        "max_cpu_percent": 80,
+        "max_error_rate": 0.3,
+        "max_consecutive_errors": 5
+    },
+    "browser_settings": {
+        "headless": true,
+        "viewport": {
+            "width": 1920,
+            "height": 1080
+        },
+        "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    },
+    "storage_settings": {
+        "evidence_dir": "./evidence",
+        "state_dir": "./states",
+        "config_dir": "./config"
+    }
+}

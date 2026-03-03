@@ -1,0 +1,101 @@
+{
+  "app": {
+    "name": "Full Self-Crawling Agent",
+    "version": "0.1.0",
+    "debug": false
+  },
+
+  "llm": {
+    "model": "claude-opus-4-5-20251101",
+    "api_key": "sk-j8qM9nlrE3cpu3mw1wjoGpVBxjDCzmuUGTgEMNhPlpo5Zesb",
+    "api_base": "http://45.78.224.156:3000/v1",
+    "timeout": 60,
+    "max_tokens": 1024,
+    "temperature": 0.7,
+    "top_p": 0.7,
+    "cache_enabled": true,
+    "cache_max_size": 1000
+  },
+
+  "vision_llm": {
+    "model": "gemini-2.5-flash",
+    "api_key": "",
+    "api_base": "http://45.78.224.156:3000/v1",
+    "timeout": 30,
+    "max_tokens": 1024
+  },
+
+  "browser": {
+    "headless": true,
+    "timeout": 30000,
+    "viewport": {
+      "width": 1920,
+      "height": 1080
+    },
+    "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "args": [
+      "--disable-blink-features=AutomationControlled",
+      "--disable-dev-shm-usage",
+      "--no-sandbox"
+    ]
+  },
+
+  "storage": {
+    "evidence_dir": "./evidence",
+    "state_dir": "./states",
+    "config_dir": "./config",
+    "auto_cleanup": false,
+    "max_evidence_age_days": 30
+  },
+
+  "policies": {
+    "policy_file": "./config/policies.json",
+    "enforce_strict": true,
+    "auto_load": true
+  },
+
+  "router": {
+    "use_llm": true,
+    "fallback_to_program": true,
+    "program_threshold": 0.9,
+    "rule_threshold": 0.7
+  },
+
+  "verification": {
+    "min_quality_score": 0.8,
+    "max_error_rate": 0.1,
+    "evidence_required": true,
+    "auto_retry_count": 3
+  },
+
+  "execution": {
+    "sandbox_enabled": true,
+    "sandbox_type": "docker",
+    "docker_image": "python:3.10-slim",
+    "max_execution_time": 300,
+    "memory_limit_mb": 512
+  },
+
+  "logging": {
+    "level": "INFO",
+    "file": "./logs/app.log",
+    "console": true,
+    "max_file_size_mb": 10,
+    "max_backup_files": 5
+  },
+
+  "metrics": {
+    "enabled": true,
+    "export_interval": 60,
+    "include_details": true
+  },
+
+  "limits": {
+    "max_pages_per_task": 1000,
+    "max_depth": 5,
+    "max_concurrent_requests": 10,
+    "request_delay_min": 1,
+    "request_delay_max": 3,
+    "max_retries": 3
+  }
+}

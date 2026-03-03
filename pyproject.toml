@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "full-self-crawl-agent-alpha"
+version = "2.0.0-alpha"
+description = "AI-driven autonomous web crawling agent with LLM-as-Controller architecture"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    # Core
+    "playwright>=1.40.0",
+    "beautifulsoup4>=4.12.0",
+    "httpx>=0.25.0",
+    "aiohttp>=3.9.0",
+    "requests>=2.28.0",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0.0",
+    # LLM clients
+    "anthropic>=0.3.0",
+    "openai>=1.0.0",
+    # HTML parsing (LLM can choose any)
+    "parsel>=1.8.0",
+    "lxml>=4.9.0",
+    "pyquery>=2.0.0",
+    "selectolax>=0.3.0",
+    "html5lib>=1.1",
+    # Data
+    "pandas>=2.0.0",
+    "numpy>=1.24.0",
+    "openpyxl>=3.1.0",
+    # Network
+    "chardet>=5.0.0",
+    "fake-useragent>=1.4.0",
+    "Pillow>=10.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=4.1.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+crawl-agent = "src.main:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
