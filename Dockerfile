@@ -21,6 +21,9 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
 
+# Ensure rebrowser-playwright browsers are installed
+RUN playwright install chromium 2>/dev/null || true
+
 # Workspace for agent file I/O
 RUN mkdir -p /workspace/artifacts/data /workspace/artifacts/files /workspace/tmp
 

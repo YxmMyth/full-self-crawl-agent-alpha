@@ -109,13 +109,27 @@ When done, stop and summarize what you learned about the data:
         if site_context:
             role_text += f"\n\nSite context from exploration phase:\n{site_context}"
 
+        import os
         rules = """
 Environment:
 - You are running in a headless Chromium browser inside a Docker container.
 - Some sites detect headless browsers and may block access or serve challenge pages.
 - If browser navigation fails or pages appear empty, try bash(curl ...) for direct HTTP access or look for API endpoints.
 - navigate() returns page metadata including load_time_ms and element_count — use this to detect blocked or empty pages.
+"""
+        # Inject credential awareness if available
+        site_user = os.environ.get("SITE_USERNAME", "")
+        if site_user:
+            rules += f"""
+Authentication:
+- Login credentials are available. Username: "{site_user}"
+- To get the password, use: evaluate_js with script "window.__SITE_PASSWORD__" (injected at browser start).
+- If the site requires login for downloads or access, navigate to the login page and use fill() + click() to log in.
+- After logging in successfully, call save_auth_state() to persist the session for future runs.
+- For OAuth login (e.g. "Login with GitHub"), navigate through the OAuth flow using the credentials.
+"""
 
+        rules += """
 Rules:
 - Every URL, data point, and record you report must come from actual page content you observed.
   Never generate plausible-sounding URLs or data. If extraction fails, report the failure honestly.

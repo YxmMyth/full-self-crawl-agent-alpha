@@ -84,6 +84,7 @@ class BrowserTool:
         self.browser: Optional[Browser] = None
         self.page: Optional[Page] = None
         self.context = None
+        self._storage_state_path: Optional[str] = None
 
         if check_browsers:
             installed, message = check_playwright_browsers()
@@ -92,6 +93,7 @@ class BrowserTool:
 
     async def start(self) -> None:
         """Launch browser."""
+        import os
         try:
             self.playwright = await async_playwright().start()
             self.browser = await self.playwright.chromium.launch(
@@ -102,11 +104,28 @@ class BrowserTool:
                     "--no-sandbox",
                 ],
             )
+            # Load saved auth state if available
+            storage_state = None
+            state_path = os.environ.get("BROWSER_STORAGE_STATE", "")
+            if state_path and os.path.exists(state_path):
+                storage_state = state_path
+                self._storage_state_path = state_path
+                logger.info(f"Loading browser auth state from {state_path}")
+
             self.context = await self.browser.new_context(
                 viewport={"width": 1920, "height": 1080},
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                storage_state=storage_state,
             )
             self.page = await self.context.new_page()
+
+            # Inject credentials into page JS context (agent retrieves via evaluate_js)
+            site_pass = os.environ.get("SITE_PASSWORD", "")
+            if site_pass:
+                await self.context.add_init_script(
+                    f"window.__SITE_PASSWORD__ = {repr(site_pass)};"
+                )
+
             logger.info("Browser started")
         except Exception as e:
             logger.error(f"Browser launch failed: {e}")
@@ -115,6 +134,19 @@ class BrowserTool:
                 if not installed:
                     raise RuntimeError(f"Browser launch failed: {message}") from e
             raise
+
+    async def save_auth_state(self, path: str = "") -> dict:
+        """Save browser cookies and localStorage for reuse across runs."""
+        import os
+        if not self.context:
+            return {"error": "No browser context"}
+        if not path:
+            path = os.environ.get("BROWSER_STORAGE_STATE", "/workspace/artifacts/auth_state.json")
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        await self.context.storage_state(path=path)
+        self._storage_state_path = path
+        logger.info(f"Auth state saved to {path}")
+        return {"saved": path, "hint": "Auth state will be loaded automatically on next run if BROWSER_STORAGE_STATE is set."}
 
     async def stop(self) -> None:
         """Close browser."""

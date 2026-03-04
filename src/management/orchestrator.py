@@ -219,6 +219,9 @@ class Orchestrator:
             "Take a screenshot of the current page",
             {"type": "object", "properties": {"full_page": {"type": "boolean", "description": "Capture full page (default false)"}}})
 
+        registry.register("save_auth_state", browser.save_auth_state,
+            "Save browser cookies and login state for reuse across runs. Call after logging in to persist the session.",
+            {"type": "object", "properties": {}})
         registry.register("evaluate_js", browser.evaluate,
             'Execute JavaScript in the browser with live DOM access.\n'
             'Use for: SPA/dynamic content, triggering JS events, extracting JS-rendered data.\n'
