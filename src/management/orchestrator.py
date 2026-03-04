@@ -71,6 +71,9 @@ class Orchestrator:
         self._tools = None
         self._state_mgr = None
         self._artifacts = None
+        # URL source registry: tracks URLs the agent has actually seen on pages.
+        # Used as a gate to prevent hallucinated URLs in download_file etc.
+        self._seen_urls: set[str] = set()
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -173,9 +176,12 @@ class Orchestrator:
         browser = self._browser
 
         # --- Browser tools (11) ---
-        registry.register("navigate", browser.navigate,
-            "Navigate to a URL and wait for page load",
-            {"type": "object", "properties": {"url": {"type": "string", "description": "URL to navigate to"}}, "required": ["url"]})
+        registry.register("navigate", self._navigate_tracking_wrapper,
+            "Navigate to a URL. Returns page metadata: title, load_time_ms, element_count, text_content_length, and hints about blocked/empty pages. Use wait_until to control speed: 'domcontentloaded' (fast, 1-3s), 'load' (medium), 'networkidle' (slow, may timeout at 30s).",
+            {"type": "object", "properties": {
+                "url": {"type": "string", "description": "URL to navigate to"},
+                "wait_until": {"type": "string", "enum": ["domcontentloaded", "load", "networkidle"], "description": "Page load strategy. Default 'networkidle' waits for all resources (slow). Use 'domcontentloaded' for faster loading when you don't need all resources."}
+            }, "required": ["url"]})
 
         registry.register("go_back", browser.go_back,
             "Go back to the previous page",
@@ -270,8 +276,10 @@ class Orchestrator:
             '- save_records(records): Persist extracted records (list of dicts or single dict).\n'
             '  Data saved via this function is automatically collected by the pipeline.\n'
             '  ALWAYS call save_records() when your code produces data.\n'
-            '- report_urls(urls): Report discovered target URLs for extraction.\n'
-            '  Use during exploration to report pages that contain target data.\n'
+            '- report_urls(urls): Report discovered target URLs for the extraction phase.\n'
+            '  CRITICAL in exploration: URLs reported here become the targets for Phase 2.\n'
+            '  If you don\'t call this, Phase 2 won\'t know where to extract data from.\n'
+            '  URLs are validated against page content to prevent hallucination.\n'
             '- save_file(url, description=""): Download and save a file (PDF, image, dataset, etc.).\n'
             '  The file is saved as an artifact and tracked in the output manifest.\n'
             '  Use when you find valuable files to collect as samples.\n'
@@ -310,6 +318,22 @@ class Orchestrator:
                 'Use when you discover API endpoints or need Unix text processing.',
                 {"type": "object", "properties": {"command": {"type": "string", "description": "Bash command(s) to execute"}}, "required": ["command"]})
 
+        # --- Reasoning (1) ---
+        async def _think_tool(thought: str) -> dict:
+            """Think tool — zero side effects, just returns ok."""
+            return {"status": "ok"}
+
+        registry.register("think", _think_tool,
+            'Use this tool to think and plan before taking action.\n'
+            'It does NOT interact with the page or change any state — it just records your thought.\n'
+            'Use it to:\n'
+            '- Plan your approach before complex tasks\n'
+            '- Analyze what you have learned so far\n'
+            '- Reason about why something failed and what to try next\n'
+            '- Decide between multiple strategies\n'
+            'Returns: {"status": "ok"}',
+            {"type": "object", "properties": {"thought": {"type": "string", "description": "Your reasoning, analysis, or plan"}}, "required": ["thought"]})
+
         # --- Verification (1) ---
         registry.register("verify_quality", verify_quality_tool,
             'Check extracted data quality. Returns a score (0-1) and specific issues.\n'
@@ -326,9 +350,16 @@ class Orchestrator:
         registry.register("download_file", self._download_file_tool,
             'Download a file (PDF, image, dataset, archive, etc.) from a URL.\n'
             'File is saved to artifacts/files/ and tracked in the output manifest.\n'
-            'Use when you find valuable files to include as samples.\n'
+            'Use when you already know the direct URL of the file.\n'
             'Returns: {"filename": "...", "size": N, "type": "pdf", "success": true}',
             {"type": "object", "properties": {"url": {"type": "string", "description": "URL of the file to download"}, "filename": {"type": "string", "description": "Optional filename (auto-detected from URL if omitted)"}, "description": {"type": "string", "description": "What this file is (e.g. 'sample research paper')"}}, "required": ["url"]})
+
+        registry.register("click_download", self._click_download_tool,
+            'Click an element that triggers a file download (e.g., Export button, Download link).\n'
+            'Captures the browser download and saves it as an artifact.\n'
+            'Use when a file can only be obtained by clicking a button, not via direct URL.\n'
+            'Returns: {"filename": "...", "size": N, "type": "zip", "success": true}',
+            {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of the element to click (e.g., 'button.export', 'a[download]')"}, "description": {"type": "string", "description": "What this file is (e.g., 'CodePen export zip')"}}, "required": ["selector"]})
 
         registry.register("inspect_file", self._inspect_file_tool,
             'Inspect a downloaded file and return metadata.\n'
@@ -371,6 +402,9 @@ class Orchestrator:
         all_data = []
         all_files = []
 
+        # Seed seen_urls with the start URL
+        self._seen_urls.add(url)
+
         # --- Phase 1: Exploration ---
         logger.info(f"Phase 1: Exploring {url}")
         explore_governor = Governor(
@@ -394,6 +428,12 @@ class Orchestrator:
 
         explore_result = await explore_controller.run(explore_task)
         target_urls = explore_result.get("new_links", [])
+
+        # Preserve Phase 1 records (exploration may collect metadata)
+        phase1_data = explore_result.get("data", [])
+        if phase1_data:
+            all_data.extend(phase1_data)
+            logger.info(f"Phase 1 collected {len(phase1_data)} records")
 
         # If exploration found no links, try the start URL itself
         if not target_urls:
@@ -422,7 +462,7 @@ class Orchestrator:
             logger.info(f"Phase 2: Extracting {task_item.url} ({pages_extracted+1}/{len(target_urls)})")
 
             extract_governor = Governor(
-                max_steps=30, max_llm_calls=20, max_time_seconds=300,
+                max_steps=30, max_llm_calls=30, max_time_seconds=300,
                 gate=CompletionGate(),
                 monitor=RiskMonitor(),
             )
@@ -455,10 +495,19 @@ class Orchestrator:
 
             # Build cross-page experience: raw facts, agent decides what's useful
             successful_tools = result.get("successful_tools", [])
+            failed_tools = result.get("failed_tools", [])
+            stop_reason = result.get("stop_reason", "")
+            metrics = result.get("metrics", {})
+            elapsed = metrics.get("elapsed_seconds", 0)
+            steps = result.get("steps", 0)
+            avg_time = round(elapsed / max(steps, 1), 1)
             prior_experience = (
                 f"Previous page ({task_item.url}): "
-                f"{len(page_data)} records extracted, {len(all_data)} total so far.\n"
-                f"Successful tool calls: {json.dumps(successful_tools[-5:], default=str, ensure_ascii=False)}\n"
+                f"{len(page_data)} records extracted, {len(page_files)} files downloaded, {len(all_data)} total records so far.\n"
+                f"Stop reason: {stop_reason}\n"
+                f"Timing: {elapsed:.0f}s total, {steps} steps, ~{avg_time}s per step (navigation is typically the slowest action).\n"
+                f"Approaches that worked: {json.dumps(successful_tools[-5:], default=str, ensure_ascii=False) if successful_tools else 'none'}\n"
+                f"Approaches that failed: {json.dumps(failed_tools[-5:], default=str, ensure_ascii=False) if failed_tools else 'none'}\n"
                 f"Sample record: {json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
             )
 
@@ -497,7 +546,7 @@ class Orchestrator:
         from .governor import Governor
 
         governor = Governor(
-            max_steps=30, max_llm_calls=20, max_time_seconds=300,
+            max_steps=30, max_llm_calls=30, max_time_seconds=300,
             gate=CompletionGate(),
             monitor=RiskMonitor(),
         )
@@ -518,8 +567,37 @@ class Orchestrator:
 
         return await controller.run(task)
 
+    async def _navigate_tracking_wrapper(self, url: str, wait_until: str = "networkidle") -> dict:
+        """Wrap navigate to track visited URLs and extract text content metrics."""
+        result = await self._browser.navigate(url, wait_until=wait_until)
+        # Track the final URL (after redirects) as a seen URL
+        final_url = result.get("url", url)
+        self._seen_urls.add(url)
+        self._seen_urls.add(final_url)
+        # Extract text content length for SPA detection
+        try:
+            text_len = await self._browser.page.evaluate(
+                "document.body ? document.body.innerText.length : 0"
+            )
+            result["text_content_length"] = text_len
+            elem_count = result.get("element_count", 0)
+            # SPA shell detection: many elements but little text
+            if elem_count > 50 and text_len < 200:
+                result["hint"] = (result.get("hint", "") +
+                    " Page has many elements but very little text content — "
+                    "likely an SPA that didn't render client-side content.").strip()
+        except Exception:
+            result["text_content_length"] = -1
+        return result
+
     async def _execute_code_with_context(self, code: str, language: str = "python", timeout: int = 30) -> dict:
         """Execute code with current browser state injected."""
+        if not code or not code.strip():
+            return {
+                "error": "No code provided.",
+                "hint": "Provide Python code to execute. Available helpers: save_records(records), report_urls(urls), save_file(url, description). Pre-loaded: page_html, page_url."
+            }
+
         from ..tools.code_runner import execute_code
 
         ctx_dir = tempfile.mkdtemp(prefix="crawl_ctx_")
@@ -555,18 +633,52 @@ class Orchestrator:
                     f'def save_records(records):\n'
                     f'    """Persist extracted records to the data pipeline. Call this to save your results."""\n'
                     f'    _recs = records if isinstance(records, list) else [records]\n'
+                    f'    if len(page_html.strip()) < 500:\n'
+                    f'        print(f"⚠️ Warning: page content is very small ({{len(page_html)}} chars). Page may be blocked or empty. Verify records are based on real content.")\n'
+                    f'    # Content anchoring: check if record values appear in page content\n'
+                    f'    _anchored = 0\n'
+                    f'    _total_vals = 0\n'
+                    f'    for _r in _recs[:3]:  # sample first 3 records\n'
+                    f'        for _v in (list(_r.values()) if isinstance(_r, dict) else []):\n'
+                    f'            _sv = str(_v).strip()\n'
+                    f'            if len(_sv) > 5 and _sv not in ("True", "False", "None"):\n'
+                    f'                _total_vals += 1\n'
+                    f'                if _sv[:30] in page_html:\n'
+                    f'                    _anchored += 1\n'
+                    f'    if _total_vals > 0 and _anchored == 0:\n'
+                    f'        print(f"⚠️ Content anchoring failed: none of the record values were found in page_html. Records may be hallucinated. Verify data comes from actual page content.")\n'
                     f'    with open(_os.path.join(_ctx, "records.jsonl"), "a", encoding="utf-8") as _rf:\n'
                     f'        for _r in _recs:\n'
                     f'            _rf.write(_json.dumps(_r, ensure_ascii=False, default=str) + "\\n")\n'
-                    f'    print(f"Saved {{len(_recs)}} records")\n'
+                    f'    _anchor_info = f" ({{_anchored}}/{{_total_vals}} values anchored in page)" if _total_vals > 0 else ""\n'
+                    f'    print(f"Saved {{len(_recs)}} records{{_anchor_info}}")\n'
                     f'\n'
                     f'def report_urls(urls):\n'
-                    f'    """Report discovered target URLs for extraction. Use during exploration."""\n'
+                    f'    """Report discovered target URLs for extraction. URLs are validated against page content."""\n'
+                    f'    from urllib.parse import urlparse as _urlparse\n'
                     f'    _urls = urls if isinstance(urls, list) else [urls]\n'
+                    f'    if len(page_html.strip()) < 500:\n'
+                    f'        print(f"⚠️ Warning: page content is very small ({{len(page_html)}} chars). Page may be blocked or empty. URLs may be unreliable.")\n'
+                    f'    _accepted = []\n'
+                    f'    _rejected = []\n'
+                    f'    for _u in _urls:\n'
+                    f'        _u = _u.strip()\n'
+                    f'        if not _u:\n'
+                    f'            continue\n'
+                    f'        _path = _urlparse(_u).path.rstrip("/")\n'
+                    f'        _segments = [s for s in _path.split("/") if len(s) > 3]\n'
+                    f'        if not _segments:\n'
+                    f'            _accepted.append(_u)\n'
+                    f'        elif any(seg in page_html for seg in _segments):\n'
+                    f'            _accepted.append(_u)\n'
+                    f'        else:\n'
+                    f'            _rejected.append(_u)\n'
                     f'    with open(_os.path.join(_ctx, "urls.txt"), "a", encoding="utf-8") as _uf:\n'
-                    f'        for _u in _urls:\n'
-                    f'            _uf.write(_u.strip() + "\\n")\n'
-                    f'    print(f"Reported {{len(_urls)}} URLs")\n'
+                    f'        for _u in _accepted:\n'
+                    f'            _uf.write(_u + "\\n")\n'
+                    f'    if _rejected:\n'
+                    f'        print(f"⚠️ Rejected {{len(_rejected)}} URLs not found in page content (possible hallucination): {{_rejected[:3]}}")\n'
+                    f'    print(f"Reported {{len(_accepted)}} verified URLs ({{len(_rejected)}} rejected)")\n'
                     f'\n'
                     f'def save_file(url, description=""):\n'
                     f'    """Download and save a file (PDF, image, dataset, etc.) as an artifact.\n'
@@ -621,6 +733,8 @@ class Orchestrator:
                             discovered.append(line)
                 if discovered:
                     result["_urls"] = discovered
+                    # Track report_urls output as seen URLs
+                    self._seen_urls.update(discovered)
                     logger.info(f"execute_code side-channel: {len(discovered)} URLs reported")
 
             # Read files side-channel (file metadata written by save_file())
@@ -679,13 +793,47 @@ class Orchestrator:
         return {"saved": len(data), "path": filepath, "format": format}
 
     async def _download_file_tool(self, url: str, filename: str = "", description: str = "") -> dict:
-        """Tool: download a file to artifacts."""
+        """Tool: download a file to artifacts. Validates URL against seen sources."""
+        from urllib.parse import urlparse
+
+        # Gate: validate URL was seen on a page the agent actually visited
+        parsed = urlparse(url)
+        url_domain = parsed.netloc
+        # Check if URL (or its base) is in seen_urls, or if URL path segments appear in any seen URL
+        url_grounded = False
+        if url in self._seen_urls:
+            url_grounded = True
+        else:
+            # Check if the domain matches a visited page
+            for seen in self._seen_urls:
+                seen_domain = urlparse(seen).netloc
+                if seen_domain and seen_domain == url_domain:
+                    url_grounded = True
+                    break
+        if not url_grounded:
+            # Also check if URL was found in current page HTML
+            try:
+                html = await self._get_clean_html()
+                path_part = parsed.path.rstrip("/")
+                segments = [s for s in path_part.split("/") if len(s) > 3]
+                if any(seg in html for seg in segments):
+                    url_grounded = True
+            except Exception:
+                pass
+
+        if not url_grounded:
+            logger.warning(f"download_file URL not grounded in any visited page: {url}")
+            return {
+                "success": False,
+                "error": f"URL not found in any visited page. This URL may be hallucinated. "
+                         f"First navigate to a page containing this URL, or use click_download to download via browser interaction."
+            }
+
         from ..tools.downloader import FileDownloader
         dl_dir = str(self._artifacts.files_dir) if self._artifacts else "./artifacts/files"
         os.makedirs(dl_dir, exist_ok=True)
         downloader = FileDownloader(download_dir=dl_dir)
-        from urllib.parse import urlparse
-        path = urlparse(url).path
+        path = parsed.path
         ext = path.rsplit(".", 1)[-1] if "." in path else "bin"
         result = await downloader.download(url, file_type=ext, filename=filename or None)
         # Track in artifact manager
@@ -698,6 +846,47 @@ class Orchestrator:
                 "description": description,
             })
         return result
+
+    async def _click_download_tool(self, selector: str, description: str = "") -> dict:
+        """Tool: click an element and capture the browser-triggered download."""
+        if not self._browser:
+            return {"success": False, "error": "Browser not available"}
+
+        result = await self._browser.click_download(selector)
+        if not result.get("success"):
+            return result
+
+        # Save the captured download to artifacts
+        download = result.pop("_download", None)
+        if not download:
+            return {"success": False, "error": "Download object not captured"}
+
+        dl_dir = str(self._artifacts.files_dir) if self._artifacts else "./artifacts/files"
+        os.makedirs(dl_dir, exist_ok=True)
+
+        suggested = download.suggested_filename or "download"
+        save_path = os.path.join(dl_dir, suggested)
+        await download.save_as(save_path)
+
+        size = os.path.getsize(save_path) if os.path.exists(save_path) else 0
+        ext = suggested.rsplit(".", 1)[-1] if "." in suggested else "bin"
+
+        # Track in artifact manager
+        if self._artifacts:
+            self._artifacts.add_file({
+                "url": result.get("url", ""),
+                "filename": suggested,
+                "size": size,
+                "type": ext,
+                "description": description,
+            })
+
+        return {
+            "success": True,
+            "filename": suggested,
+            "size": size,
+            "type": ext,
+        }
 
     async def _inspect_file_tool(self, filename: str) -> dict:
         """Tool: inspect a downloaded file and return metadata."""

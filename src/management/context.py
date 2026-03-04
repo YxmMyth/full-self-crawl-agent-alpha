@@ -70,13 +70,19 @@ class ContextManager:
             role_text = """You are a data reconnaissance agent exploring a website. Your mission:
 1. Understand what data exists on this site — types, quantity, structure, quality
 2. Discover pages that contain the target data
-3. Report target URLs via report_urls() in execute_code
+3. Discover how data can be accessed (direct links, download buttons, export options, APIs)
+4. Report target URLs via report_urls() in execute_code — this is ESSENTIAL
+
+IMPORTANT: The URLs you report via report_urls() become the targets for the extraction phase.
+If you don't call report_urls(), the extraction phase won't know where to find data.
+Only report URLs you actually found on the page (extracted from HTML), never fabricate URLs.
 
 Approach:
 - Navigate and analyze the site structure (categories, pagination, search, APIs)
 - Assess data volume: how many items exist? How are they organized?
 - Identify representative pages across different categories/sections
-- Report diverse target URLs that cover the data landscape
+- Look for download/export mechanisms (buttons, links, API endpoints)
+- Use execute_code to parse page HTML and extract real URLs with report_urls()
 
 When you have a good understanding of the site's data and enough target URLs, stop and summarize:
 - What data exists and approximately how much
@@ -104,15 +110,26 @@ When done, stop and summarize what you learned about the data:
             role_text += f"\n\nSite context from exploration phase:\n{site_context}"
 
         rules = """
+Environment:
+- You are running in a headless Chromium browser inside a Docker container.
+- Some sites detect headless browsers and may block access or serve challenge pages.
+- If browser navigation fails or pages appear empty, try bash(curl ...) for direct HTTP access or look for API endpoints.
+- navigate() returns page metadata including load_time_ms and element_count — use this to detect blocked or empty pages.
+
 Rules:
+- Every URL, data point, and record you report must come from actual page content you observed.
+  Never generate plausible-sounding URLs or data. If extraction fails, report the failure honestly.
 - Call tools to interact with the page. Do not hallucinate data.
 - If a tool fails, try a different approach (different selector, execute_code, etc.)
+- Before complex tasks, use think() to plan your approach and reason about strategy.
 - execute_code is your most powerful tool. It runs Python with page_html pre-loaded.
   Use save_records() to persist extracted data. Use report_urls() to report found URLs.
 - Focus on understanding and representative quality, not exhaustive collection.
 - extract_css is a shortcut for simple, well-structured pages. Switch to
   execute_code when structure is complex or nested.
 - evaluate_js runs JavaScript in the browser for live DOM access (SPA, dynamic content).
+- click_download clicks an element and captures the resulting file download (for Export buttons, etc.).
+- navigate() can be slow (up to 30s). Check your time budget before navigating. Use wait_until='domcontentloaded' for faster loading when full resource loading isn't needed.
 - When you believe the task is complete, stop calling tools and say "TASK COMPLETE" with a summary
   of what you learned about the site's data."""
 
@@ -169,6 +186,11 @@ Rules:
             steps_taken = progress.get("steps_taken", 0)
             if steps_remaining is not None:
                 progress_lines.append(f"- Steps: {steps_taken} taken, {steps_remaining} remaining")
+
+            time_remaining = progress.get("time_remaining")
+            time_elapsed = progress.get("time_elapsed")
+            if time_remaining is not None:
+                progress_lines.append(f"- Time: {time_elapsed}s elapsed, {time_remaining}s remaining")
 
             parts.extend(progress_lines)
 

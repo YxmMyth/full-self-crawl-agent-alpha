@@ -44,16 +44,42 @@ class Governor:
         self._total_tokens = 0
         self._start_time: float | None = None
 
+        # Navigate loop tracking (URL → visit count)
+        self._navigate_counts: dict[str, int] = {}
+        # Action hash window for repetition detection (like browser-use)
+        self._recent_action_hashes: list[str] = []
+        self._action_window_size = 15
+
     def start(self) -> None:
         """Mark the start of execution."""
         self._start_time = time.time()
         self._llm_calls = 0
         self._total_tokens = 0
+        self._navigate_counts.clear()
+        self._recent_action_hashes.clear()
 
     def record_llm_call(self, tokens: int = 0) -> None:
         """Record an LLM API call."""
         self._llm_calls += 1
         self._total_tokens += tokens
+
+    def record_action(self, tool_name: str, args: dict) -> None:
+        """Record an action for loop detection. Call after each tool execution."""
+        import hashlib, json
+        # Normalize action for hashing
+        if tool_name == "navigate":
+            key = f"navigate|{args.get('url', '')}"
+            url = args.get("url", "")
+            self._navigate_counts[url] = self._navigate_counts.get(url, 0) + 1
+        elif tool_name == "think":
+            return  # Don't track think calls for loop detection
+        else:
+            filtered = {k: v for k, v in sorted(args.items()) if v is not None}
+            key = f"{tool_name}|{json.dumps(filtered, sort_keys=True, default=str)}"
+        h = hashlib.sha256(key.encode()).hexdigest()[:12]
+        self._recent_action_hashes.append(h)
+        if len(self._recent_action_hashes) > self._action_window_size:
+            self._recent_action_hashes = self._recent_action_hashes[-self._action_window_size:]
 
     def should_stop(self, history) -> str | None:
         """Check if execution should be force-stopped.
@@ -125,6 +151,32 @@ class Governor:
                 nudges.append(
                     f"⚠️ {tool} failed twice with same args. "
                     f"Try a different approach (execute_code, different selectors, etc.)."
+                )
+
+        # Navigate URL loop detection (escalating nudges)
+        for url, count in self._navigate_counts.items():
+            if count >= 4:
+                nudges.append(
+                    f"⚠️ You have navigated to {url} {count} times. "
+                    f"This page is likely not loading the content you need. "
+                    f"Try a completely different approach: use bash(curl), evaluate_js, or different URLs."
+                )
+            elif count >= 3:
+                nudges.append(
+                    f"⚠️ You have navigated to {url} {count} times already. "
+                    f"If it hasn't worked before, repeating won't help. Consider alternatives."
+                )
+
+        # Action repetition detection (rolling window)
+        if len(self._recent_action_hashes) >= 5:
+            from collections import Counter
+            counts = Counter(self._recent_action_hashes)
+            most_common_hash, most_common_count = counts.most_common(1)[0]
+            if most_common_count >= 5:
+                nudges.append(
+                    f"⚠️ You have repeated a similar action {most_common_count} times "
+                    f"in the last {len(self._recent_action_hashes)} actions. "
+                    f"If you're not making progress, try a different strategy."
                 )
 
         # Completion gate

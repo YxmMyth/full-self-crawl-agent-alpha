@@ -153,6 +153,9 @@ class CrawlController:
 
                     self.history.record(self._step_number, tc, result)
 
+                    # Track for loop detection
+                    self.governor.record_action(tc.name, tc.arguments)
+
                     # Track risk
                     if self.governor.monitor:
                         self.governor.monitor.record_action(
@@ -169,8 +172,8 @@ class CrawlController:
                     if tc.name in ("execute_code", "bash") and result.success:
                         self._collect_side_channel(result, new_links)
 
-                    # Track files from download_file tool
-                    if tc.name == "download_file" and result.success:
+                    # Track files from download_file or click_download tool
+                    if tc.name in ("download_file", "click_download") and result.success:
                         try:
                             data = json.loads(result.content)
                             if isinstance(data, dict) and data.get("success"):
@@ -207,6 +210,7 @@ class CrawlController:
             "summary": summary,
             "new_links": new_links,
             "successful_tools": self._extract_successful_tools(),
+            "failed_tools": self._extract_failed_tools(),
             "metrics": {
                 **self.history.compile_results(),
                 **self.governor.get_stats(),
@@ -283,6 +287,8 @@ class CrawlController:
 
     def _compute_progress(self, task: dict) -> dict:
         """Compute progress stats for context injection."""
+        time_elapsed = round(self.governor.elapsed_seconds, 1)
+        time_remaining = round(max(0, self.governor.max_time_seconds - self.governor.elapsed_seconds), 1)
         return {
             "role": task.get("role", "extraction"),
             "records_collected": len(self._collected_data),
@@ -291,6 +297,8 @@ class CrawlController:
             "fields": self._summarize_fields(),
             "steps_taken": self.history.count,
             "steps_remaining": self.governor.max_steps - self.history.count,
+            "time_elapsed": time_elapsed,
+            "time_remaining": time_remaining,
         }
 
     def _summarize_fields(self) -> str | None:
@@ -327,6 +335,22 @@ class CrawlController:
                         "args": step.tool_call.arguments,
                     })
         return successful
+
+    def _extract_failed_tools(self) -> list[dict]:
+        """Extract failed tool calls for cross-page learning.
+
+        Returns failed steps with error info — the agent on the next page
+        can learn from failures and avoid repeating them.
+        """
+        failed = []
+        for step in self.history.steps:
+            if not step.succeeded:
+                error_msg = step.result.content[:200] if step.result else "unknown"
+                failed.append({
+                    "tool": step.tool_name,
+                    "error": error_msg,
+                })
+        return failed
 
     def _extract_css_data(self, result_content: str) -> None:
         """Extract records from extract_css result into collected data."""

@@ -52,6 +52,7 @@ RUN cp -r /root/.cache /home/crawler/.cache 2>/dev/null || true \
 
 USER crawler
 
-ENV BROWSER_HEADLESS=true
+ENV BROWSER_HEADLESS=true \
+    ARTIFACTS_DIR=/workspace/artifacts
 
 ENTRYPOINT ["python", "-m", "src.main"]

@@ -20,7 +20,7 @@ from typing import Any
 
 logger = logging.getLogger("tools.artifacts")
 
-DEFAULT_DIR = "./artifacts"
+DEFAULT_DIR = os.environ.get("ARTIFACTS_DIR", "./artifacts")
 
 
 class ArtifactManager:

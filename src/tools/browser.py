@@ -140,18 +140,44 @@ class BrowserTool:
 
     @with_retry(max_retries=3, base_delay=1.0, max_delay=15.0)
     async def navigate(self, url: str, wait_until: str = "networkidle",
-                       timeout: int = 30000) -> None:
-        """Navigate to URL with automatic fallback from networkidle to load."""
+                       timeout: int = 30000) -> dict:
+        """Navigate to URL and return page metadata including timing."""
+        import time as _time
         if self.page is None:
             await self.start()
+
+        start = _time.time()
+        actual_strategy = wait_until
         try:
             await self.page.goto(url, wait_until=wait_until, timeout=timeout)
         except Exception as e:
             if wait_until == "networkidle" and "Timeout" in str(e):
                 logger.info(f"networkidle timeout, falling back to load: {url}")
+                actual_strategy = "load (networkidle timed out)"
                 await self.page.goto(url, wait_until="load", timeout=timeout)
             else:
                 raise
+        elapsed_ms = int((_time.time() - start) * 1000)
+
+        # Collect page metadata for agent awareness
+        title = await self.page.title() or ""
+        final_url = self.page.url
+        # Quick element count to detect empty/blocked pages
+        elem_count = await self.page.evaluate("document.querySelectorAll('*').length")
+        page_hint = ""
+        if elem_count < 10:
+            page_hint = "Page appears empty (SPA not loaded, or blocked by anti-bot)"
+        elif "just a moment" in title.lower() or "cloudflare" in title.lower():
+            page_hint = "Possible Cloudflare challenge page detected"
+
+        return {
+            "url": final_url,
+            "title": title,
+            "load_time_ms": elapsed_ms,
+            "strategy": actual_strategy,
+            "element_count": elem_count,
+            "hint": page_hint,
+        }
 
     async def go_back(self) -> None:
         """Go back to previous page."""
@@ -187,6 +213,25 @@ class BrowserTool:
     async def click(self, selector: str) -> None:
         """Click element by CSS selector."""
         await self.page.click(selector)
+
+    async def click_download(self, selector: str, timeout: int = 15000) -> dict:
+        """Click element and capture the resulting browser download.
+        
+        Uses Playwright expect_download to capture files triggered by button clicks.
+        Returns dict with file path, name, size, and suggested_filename.
+        """
+        try:
+            async with self.page.expect_download(timeout=timeout) as download_info:
+                await self.page.click(selector)
+            download = await download_info.value
+            return {
+                "success": True,
+                "suggested_filename": download.suggested_filename,
+                "url": download.url,
+                "_download": download,  # internal: caller saves the file
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     @with_retry(max_retries=3, base_delay=0.5, max_delay=5.0)
     async def fill(self, selector: str, value: str) -> None:
