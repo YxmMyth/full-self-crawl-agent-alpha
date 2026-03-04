@@ -120,10 +120,33 @@ class CrawlController:
                 for tc in decision.tool_calls:
                     self._step_number += 1
 
-                    # Auto-inject accumulated data if save_data called without data
+                    # Auto-save accumulated data if save_data called without data
                     if tc.name == "save_data" and "data" not in tc.arguments and self._collected_data:
+                        # Bypass normal tool execution — save directly without putting data in context
                         tc.arguments["data"] = self._collected_data
-                        logger.info(f"Auto-injected {len(self._collected_data)} records into save_data")
+                        result = await self._execute_tool(tc)
+                        # Replace the result to avoid huge data in context
+                        result.content = json.dumps({
+                            "saved": len(self._collected_data),
+                            "path": "evidence/extracted_data." + tc.arguments.get("format", "json"),
+                            "format": tc.arguments.get("format", "json"),
+                            "note": "auto-saved all records collected via save_records()"
+                        })
+                        # Remove data from arguments before recording in history
+                        tc.arguments.pop("data", None)
+                        tc.arguments["_auto_saved"] = len(self._collected_data)
+                        logger.info(f"save_data: auto-saved {len(self._collected_data)} collected records")
+
+                        self.history.record(self._step_number, tc, result)
+                        if self.governor.monitor:
+                            self.governor.monitor.record_action(success=result.success, action_name=tc.name)
+                        continue
+
+                    # Auto-inject collected data for verify_quality if no data provided
+                    if tc.name == "verify_quality" and "data" not in tc.arguments and self._collected_data:
+                        sample = self._collected_data[:10]
+                        tc.arguments["data"] = sample
+                        logger.info(f"verify_quality: auto-injected {len(sample)} sample records")
 
                     result = await self._execute_tool(tc)
 

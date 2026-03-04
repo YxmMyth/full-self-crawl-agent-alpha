@@ -159,7 +159,7 @@ class TestContextManager:
         h = StepHistory()
         msgs = cm.build(task, h, [])
         assert msgs[0]["role"] == "system"
-        assert "extraction" in msgs[0]["content"].lower()
+        assert "extraction" in msgs[0]["content"].lower() or "data" in msgs[0]["content"].lower()
         assert any("https://x.com" in m.get("content", "") for m in msgs)
 
     def test_build_with_history(self):
@@ -188,4 +188,4 @@ class TestContextManager:
         task = {"url": "x", "role": "exploration",
                 "spec": CrawlSpec(url="x", requirement="y")}
         msgs = cm.build(task, StepHistory(), [])
-        assert "exploration" in msgs[0]["content"].lower()
+        assert "exploration" in msgs[0]["content"].lower() or "exploring" in msgs[0]["content"].lower() or "reconnaissance" in msgs[0]["content"].lower()

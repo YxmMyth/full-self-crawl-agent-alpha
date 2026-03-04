@@ -67,28 +67,37 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are exploring a website to discover pages containing target data. This is the exploration phase — your output is URLs, not data.
+            role_text = """You are a data reconnaissance agent exploring a website. Your mission:
+1. Understand what data exists on this site — types, quantity, structure, quality
+2. Discover pages that contain the target data
+3. Report target URLs via report_urls() in execute_code
 
-Use navigate to visit pages, analyze_links to understand site structure, and execute_code with report_urls() to report target pages you discover.
+Approach:
+- Navigate and analyze the site structure (categories, pagination, search, APIs)
+- Assess data volume: how many items exist? How are they organized?
+- Identify representative pages across different categories/sections
+- Report diverse target URLs that cover the data landscape
 
-Example workflow:
-1. Navigate to the start URL
-2. Analyze the page structure (analyze_page, get_html, execute_code)
-3. Find links to pages that contain the target data
-4. Call report_urls() in execute_code to report those URLs
-5. Navigate deeper if needed, repeat
-
-When you have identified enough target pages, stop and summarize what you found."""
+When you have a good understanding of the site's data and enough target URLs, stop and summarize:
+- What data exists and approximately how much
+- How the data is structured and organized
+- What you found noteworthy about data quality"""
         else:
-            role_text = """You are a web data extraction expert. Your goal is to extract structured data from web pages.
+            role_text = """You are a data analysis agent. Your mission:
+1. Understand the data on this page — fields, structure, quality, patterns
+2. Collect representative high-quality samples via save_records() in execute_code
+3. Assess: what fields exist? Are there missing values? What's the data quality?
 
-Use execute_code with save_records() as your primary extraction method:
-1. Navigate to the target page
-2. Write Python with BeautifulSoup to parse page_html
-3. Call save_records(items) to persist extracted data
-4. Check progress — the pipeline shows how many records you've collected
+Approach:
+- Analyze the page structure first (execute_code with BeautifulSoup)
+- Extract a representative sample of records — cover variety, not just volume
+- Use save_records(items) to persist samples. The pipeline tracks your progress.
+- If you see different categories/types of data, sample from each
 
-If extraction fails with one approach, try alternatives (different selectors, execute_code, evaluate_js)."""
+When done, stop and summarize what you learned about the data:
+- Fields available and their completeness
+- Data quality observations
+- Approximate total data volume on this page/section"""
 
         site_context = task.get("site_context", "")
         if site_context:
@@ -100,10 +109,12 @@ Rules:
 - If a tool fails, try a different approach (different selector, execute_code, etc.)
 - execute_code is your most powerful tool. It runs Python with page_html pre-loaded.
   Use save_records() to persist extracted data. Use report_urls() to report found URLs.
+- Focus on understanding and representative quality, not exhaustive collection.
 - extract_css is a shortcut for simple, well-structured pages. Switch to
   execute_code when structure is complex or nested.
 - evaluate_js runs JavaScript in the browser for live DOM access (SPA, dynamic content).
-- When you believe the task is complete, stop calling tools and say "TASK COMPLETE" with a summary."""
+- When you believe the task is complete, stop calling tools and say "TASK COMPLETE" with a summary
+  of what you learned about the site's data."""
 
         return {"role": "system", "content": role_text + rules}
 
@@ -172,8 +183,11 @@ Rules:
     def _compress_history(self, history) -> list[dict]:
         """Convert step history to message pairs.
 
-        Recent steps: full tool_call + tool result messages.
-        Older steps: compressed into a single summary message.
+        Applies Anthropic-style tool result clearing:
+        - Recent steps: full tool_call + cleared/capped tool results
+        - Older steps: compressed into a single summary message
+        - Large results (HTML, data dumps) that have been consumed by
+          subsequent steps are replaced with concise summaries.
         """
         if not history or history.count == 0:
             return []
@@ -185,18 +199,20 @@ Rules:
         if summary:
             messages.append({"role": "system", "content": summary})
 
-        # Recent steps → full messages
-        for step in history.recent(self.max_history_steps):
+        # Recent steps → full messages with result clearing
+        recent = history.recent(self.max_history_steps)
+        for i, step in enumerate(recent):
+            is_last = (i == len(recent) - 1)
+
             # Assistant message with tool_call
             messages.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [step.tool_call.to_message()],
             })
-            # Tool result message
-            result_content = step.result.content
-            if len(result_content) > 15000:
-                result_content = result_content[:15000] + "\n... (truncated)"
+
+            # Tool result — apply clearing based on type and recency
+            result_content = self._clear_tool_result(step, is_last)
             messages.append({
                 "role": "tool",
                 "tool_call_id": step.result.tool_call_id,
@@ -204,6 +220,69 @@ Rules:
             })
 
         return messages
+
+    def _clear_tool_result(self, step, is_last: bool) -> str:
+        """Clear/cap tool results to manage context budget.
+
+        Inspired by Anthropic's tool result clearing: once a result has
+        been processed, the raw output is no longer needed.
+
+        Args:
+            step: The step containing tool_call and result
+            is_last: Whether this is the most recent step (preserve more)
+        """
+        content = step.result.content
+        tool = step.tool_call.name
+        success = step.result.success
+
+        if not success:
+            # Error messages are always valuable — keep but cap
+            return content[:3000] if len(content) > 3000 else content
+
+        # Tools whose raw output loses value after processing
+        heavy_tools = {"get_html", "get_text", "analyze_page", "analyze_links", "screenshot"}
+
+        if tool in heavy_tools and not is_last:
+            # Already consumed by subsequent steps — summarize
+            return self._summarize_result(tool, content)
+
+        if tool in ("execute_code", "bash"):
+            # Keep stdout but cap it — the important data is in side-channel
+            cap = 4000 if is_last else 2000
+            if len(content) > cap:
+                return content[:cap] + "\n... (output truncated)"
+            return content
+
+        if tool == "save_data":
+            # Never need to see saved data in context again
+            return self._summarize_result(tool, content)
+
+        # Default: cap at reasonable size
+        cap = 8000 if is_last else 4000
+        if len(content) > cap:
+            return content[:cap] + "\n... (truncated)"
+        return content
+
+    def _summarize_result(self, tool: str, content: str) -> str:
+        """Create a concise summary of a tool result."""
+        import json
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict):
+                if "links" in data:
+                    count = len(data["links"]) if isinstance(data["links"], list) else "?"
+                    return f'{{"links": [{count} items], "summary": "Link analysis complete"}}'
+                if "saved" in data:
+                    return json.dumps({"saved": data["saved"], "path": data.get("path", "")})
+                # Generic dict summary: show keys and value lengths
+                summary = {k: f"({len(str(v))} chars)" if len(str(v)) > 100 else v
+                           for k, v in data.items()}
+                s = json.dumps(summary, ensure_ascii=False, default=str)
+                return s[:1500] if len(s) > 1500 else s
+        except (json.JSONDecodeError, TypeError):
+            pass
+        # Fallback: first N chars
+        return content[:500] + "..." if len(content) > 500 else content
 
     def _truncate_html(self, html: str, max_chars: int = 5000) -> str:
         """Truncate HTML preserving structure hints."""
