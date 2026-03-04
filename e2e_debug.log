@@ -1,0 +1,593 @@
+ Container full-self-crawl-agent-alpha-agent-run-66d3be9ad36b Creating 
+ Container full-self-crawl-agent-alpha-agent-run-66d3be9ad36b Created 
+03:18:23 [main] INFO: Starting crawl: https://arxiv.org/list/cs.AI/recent
+03:18:23 [main] INFO: Mode: full_site, Model: claude-sonnet-4-5-20250929
+03:18:23 [management.orchestrator] INFO: Task e0bea58d: https://arxiv.org/list/cs.AI/recent mode=full_site
+03:18:24 [tools.browser] INFO: Browser started
+03:18:24 [httpcore.connection] DEBUG: connect_tcp.started host='45.78.224.156' port=3000 local_address=None timeout=120 socket_options=None
+03:18:24 [httpcore.connection] DEBUG: connect_tcp.complete return_value=<httpcore._backends.anyio.AnyIOStream object at 0x76ace8d94980>
+03:18:24 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:18:24 [httpcore.http11] DEBUG: send_request_headers.complete
+03:18:24 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:18:24 [httpcore.http11] DEBUG: send_request_body.complete
+03:18:24 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:18:32 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2294'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:18:31 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031824530306466R8sXbxR2')])
+03:18:32 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:18:32 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:18:32 [httpcore.http11] DEBUG: receive_response_body.complete
+03:18:32 [httpcore.http11] DEBUG: response_closed.started
+03:18:32 [httpcore.http11] DEBUG: response_closed.complete
+03:18:32 [tools.registry] DEBUG: Registered tool: navigate
+03:18:32 [tools.registry] DEBUG: Registered tool: go_back
+03:18:32 [tools.registry] DEBUG: Registered tool: get_html
+03:18:32 [tools.registry] DEBUG: Registered tool: get_text
+03:18:32 [tools.registry] DEBUG: Registered tool: click
+03:18:32 [tools.registry] DEBUG: Registered tool: fill
+03:18:32 [tools.registry] DEBUG: Registered tool: select_option
+03:18:32 [tools.registry] DEBUG: Registered tool: press_key
+03:18:32 [tools.registry] DEBUG: Registered tool: scroll
+03:18:32 [tools.registry] DEBUG: Registered tool: screenshot
+03:18:32 [tools.registry] DEBUG: Registered tool: evaluate_js
+03:18:32 [tools.registry] DEBUG: Registered tool: extract_css
+03:18:32 [tools.registry] DEBUG: Registered tool: intercept_api
+03:18:32 [tools.registry] DEBUG: Registered tool: analyze_page
+03:18:32 [tools.registry] DEBUG: Registered tool: analyze_links
+03:18:32 [tools.registry] DEBUG: Registered tool: search_page
+03:18:32 [tools.registry] DEBUG: Registered tool: execute_code
+03:18:32 [tools.registry] DEBUG: Registered tool: bash
+03:18:32 [tools.registry] DEBUG: Registered tool: verify_quality
+03:18:32 [tools.registry] DEBUG: Registered tool: save_data
+03:18:32 [tools.registry] DEBUG: Registered tool: download_file
+03:18:32 [management.orchestrator] INFO: Phase 1: Exploring https://arxiv.org/list/cs.AI/recent
+03:18:32 [execution.controller] INFO: Controller starting: https://arxiv.org/list/cs.AI/recent, role=exploration
+03:18:32 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:18:32 [httpcore.http11] DEBUG: send_request_headers.complete
+03:18:32 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:18:32 [httpcore.http11] DEBUG: send_request_body.complete
+03:18:32 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:18:34 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'984'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:18:34 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031832287082864H27G5EWT')])
+03:18:34 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:18:34 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:18:34 [httpcore.http11] DEBUG: receive_response_body.complete
+03:18:34 [httpcore.http11] DEBUG: response_closed.started
+03:18:34 [httpcore.http11] DEBUG: response_closed.complete
+03:18:38 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:18:38 [httpcore.http11] DEBUG: send_request_headers.complete
+03:18:38 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:18:38 [httpcore.http11] DEBUG: send_request_body.complete
+03:18:38 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:18:40 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'751'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:18:39 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031838533818621X2ZBWIDd')])
+03:18:40 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:18:40 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:18:40 [httpcore.http11] DEBUG: receive_response_body.complete
+03:18:40 [httpcore.http11] DEBUG: response_closed.started
+03:18:40 [httpcore.http11] DEBUG: response_closed.complete
+03:18:40 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:18:40 [httpcore.http11] DEBUG: send_request_headers.complete
+03:18:40 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:18:40 [httpcore.http11] DEBUG: send_request_body.complete
+03:18:40 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:18:49 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2840'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:18:48 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031840826235914TKNzesbv')])
+03:18:49 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:18:49 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:18:49 [httpcore.http11] DEBUG: receive_response_body.complete
+03:18:49 [httpcore.http11] DEBUG: response_closed.started
+03:18:49 [httpcore.http11] DEBUG: response_closed.complete
+03:18:50 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:18:50 [httpcore.http11] DEBUG: send_request_headers.complete
+03:18:50 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:18:50 [httpcore.http11] DEBUG: send_request_body.complete
+03:18:50 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:01 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3581'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:01 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031850237344567FxXipH2s')])
+03:19:01 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:01 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:01 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:01 [httpcore.http11] DEBUG: response_closed.started
+03:19:01 [httpcore.http11] DEBUG: response_closed.complete
+03:19:02 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:02 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:02 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:02 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:02 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:10 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3290'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:09 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031902517702200zFRNxY4o')])
+03:19:10 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:10 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:10 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:10 [httpcore.http11] DEBUG: response_closed.started
+03:19:10 [httpcore.http11] DEBUG: response_closed.complete
+03:19:10 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:10 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:10 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:10 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:10 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:17 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2045'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:17 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031910820762496bQlpp6n2')])
+03:19:17 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:17 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:17 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:17 [httpcore.http11] DEBUG: response_closed.started
+03:19:17 [httpcore.http11] DEBUG: response_closed.complete
+03:19:18 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:18 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:18 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:18 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:18 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:21 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'971'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:20 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'202603040319181388137dFedKOqV')])
+03:19:21 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:21 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:21 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:21 [httpcore.http11] DEBUG: response_closed.started
+03:19:21 [httpcore.http11] DEBUG: response_closed.complete
+03:19:22 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:22 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:22 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:22 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:22 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:27 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1839'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:26 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031922486655414O8zgvRAp')])
+03:19:27 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:27 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:27 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:27 [httpcore.http11] DEBUG: response_closed.started
+03:19:27 [httpcore.http11] DEBUG: response_closed.complete
+03:19:27 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:27 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:27 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:27 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:27 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:29 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'800'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:29 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'2026030403192752390618i5KpPRO9')])
+03:19:29 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:29 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:29 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:29 [httpcore.http11] DEBUG: response_closed.started
+03:19:29 [httpcore.http11] DEBUG: response_closed.complete
+03:19:29 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:29 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:29 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:29 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:29 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:37 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2381'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:37 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031929948798686FduHRxdd')])
+03:19:37 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:37 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:37 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:37 [httpcore.http11] DEBUG: response_closed.started
+03:19:37 [httpcore.http11] DEBUG: response_closed.complete
+03:19:38 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:38 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:38 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:38 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:38 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:46 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2729'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:45 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031937973439826ntxRW1Yg')])
+03:19:46 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:46 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:46 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:46 [httpcore.http11] DEBUG: response_closed.started
+03:19:46 [httpcore.http11] DEBUG: response_closed.complete
+03:19:47 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:47 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:47 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:47 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:47 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:51 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'929'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:50 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031948371580261lo4oQnX5')])
+03:19:51 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:51 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:51 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:51 [httpcore.http11] DEBUG: response_closed.started
+03:19:51 [httpcore.http11] DEBUG: response_closed.complete
+03:19:53 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:53 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:53 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:53 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:53 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:19:57 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1276'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:19:56 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031953416643457h1sYeGi')])
+03:19:57 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:19:57 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:19:57 [httpcore.http11] DEBUG: receive_response_body.complete
+03:19:57 [httpcore.http11] DEBUG: response_closed.started
+03:19:57 [httpcore.http11] DEBUG: response_closed.complete
+03:19:58 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:19:58 [httpcore.http11] DEBUG: send_request_headers.complete
+03:19:58 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:19:58 [httpcore.http11] DEBUG: send_request_body.complete
+03:19:58 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:08 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3577'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:07 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304031958294272884CUbo0Wdr')])
+03:20:08 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:08 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:08 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:08 [httpcore.http11] DEBUG: response_closed.started
+03:20:08 [httpcore.http11] DEBUG: response_closed.complete
+03:20:10 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:10 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:10 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:10 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:10 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:21 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3468'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:20 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032010626010806OiIkq8sS')])
+03:20:21 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:21 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:21 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:21 [httpcore.http11] DEBUG: response_closed.started
+03:20:21 [httpcore.http11] DEBUG: response_closed.complete
+03:20:23 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:23 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:23 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:23 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:23 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:36 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3918'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:35 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032023690061876hkgHNbHh')])
+03:20:36 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:36 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:36 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:36 [httpcore.http11] DEBUG: response_closed.started
+03:20:36 [httpcore.http11] DEBUG: response_closed.complete
+03:20:38 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:38 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:38 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:38 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:38 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:42 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'880'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:41 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032038896655383hH0SH6gg')])
+03:20:42 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:42 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:42 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:42 [httpcore.http11] DEBUG: response_closed.started
+03:20:42 [httpcore.http11] DEBUG: response_closed.complete
+03:20:42 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:42 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:42 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:42 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:42 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:46 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1306'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:46 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032042737174278DlF9f3su')])
+03:20:46 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:46 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:46 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:46 [httpcore.http11] DEBUG: response_closed.started
+03:20:46 [httpcore.http11] DEBUG: response_closed.complete
+03:20:46 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:46 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:46 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:46 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:46 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:49 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'960'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:49 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032046861402292xY0Cw8WN')])
+03:20:49 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:49 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:49 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:49 [httpcore.http11] DEBUG: response_closed.started
+03:20:49 [httpcore.http11] DEBUG: response_closed.complete
+03:20:49 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:49 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:49 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:49 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:49 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:55 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1294'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:54 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032050704636126aWmqkwXM')])
+03:20:55 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:55 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:55 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:55 [httpcore.http11] DEBUG: response_closed.started
+03:20:55 [httpcore.http11] DEBUG: response_closed.complete
+03:20:55 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:55 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:55 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:55 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:55 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:20:59 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'956'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:20:58 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032055419167444jTq8a3jJ')])
+03:20:59 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:20:59 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:20:59 [httpcore.http11] DEBUG: receive_response_body.complete
+03:20:59 [httpcore.http11] DEBUG: response_closed.started
+03:20:59 [httpcore.http11] DEBUG: response_closed.complete
+03:20:59 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:20:59 [httpcore.http11] DEBUG: send_request_headers.complete
+03:20:59 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:20:59 [httpcore.http11] DEBUG: send_request_body.complete
+03:20:59 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:21:03 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1029'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:21:02 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032059997770945ot4aenxA')])
+03:21:03 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:21:03 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:21:03 [httpcore.http11] DEBUG: receive_response_body.complete
+03:21:03 [httpcore.http11] DEBUG: response_closed.started
+03:21:03 [httpcore.http11] DEBUG: response_closed.complete
+03:21:03 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:21:03 [httpcore.http11] DEBUG: send_request_headers.complete
+03:21:03 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:21:03 [httpcore.http11] DEBUG: send_request_body.complete
+03:21:03 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:21:07 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'883'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:21:06 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'202603040321038165229711VF7Ry6f')])
+03:21:07 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:21:07 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:21:07 [httpcore.http11] DEBUG: receive_response_body.complete
+03:21:07 [httpcore.http11] DEBUG: response_closed.started
+03:21:07 [httpcore.http11] DEBUG: response_closed.complete
+03:21:07 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:21:07 [httpcore.http11] DEBUG: send_request_headers.complete
+03:21:07 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:21:07 [httpcore.http11] DEBUG: send_request_body.complete
+03:21:07 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:21:11 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1336'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:21:11 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'2026030403210711612710bO3mlhjc')])
+03:21:11 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:21:11 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:21:11 [httpcore.http11] DEBUG: receive_response_body.complete
+03:21:11 [httpcore.http11] DEBUG: response_closed.started
+03:21:11 [httpcore.http11] DEBUG: response_closed.complete
+03:21:12 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:21:12 [httpcore.http11] DEBUG: send_request_headers.complete
+03:21:12 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:21:12 [httpcore.http11] DEBUG: send_request_body.complete
+03:21:12 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:22:19 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'811'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:22:19 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032111923643101E3XLdc45')])
+03:22:19 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:22:19 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:22:19 [httpcore.http11] DEBUG: receive_response_body.complete
+03:22:19 [httpcore.http11] DEBUG: response_closed.started
+03:22:19 [httpcore.http11] DEBUG: response_closed.complete
+03:22:19 [tools.registry] ERROR: Tool 'save_data' argument error: Orchestrator._save_data_tool() missing 1 required positional argument: 'data' Required params: ['data']. Missing: ['data']. You provided: []. Example: save_data(data=[{"key": "value", ...}], format="json")
+03:22:19 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:22:19 [httpcore.http11] DEBUG: send_request_headers.complete
+03:22:19 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:22:19 [httpcore.http11] DEBUG: send_request_body.complete
+03:22:19 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:22:24 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'853'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:22:21 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032219886710996LUQnw8LA')])
+03:22:24 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:22:24 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:22:24 [httpcore.http11] DEBUG: receive_response_body.complete
+03:22:24 [httpcore.http11] DEBUG: response_closed.started
+03:22:24 [httpcore.http11] DEBUG: response_closed.complete
+03:22:24 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:22:24 [httpcore.http11] DEBUG: send_request_headers.complete
+03:22:24 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:22:24 [httpcore.http11] DEBUG: send_request_body.complete
+03:22:24 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:22:27 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'917'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:22:26 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032224378883735BFlsjS91')])
+03:22:27 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:22:27 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:22:27 [httpcore.http11] DEBUG: receive_response_body.complete
+03:22:27 [httpcore.http11] DEBUG: response_closed.started
+03:22:27 [httpcore.http11] DEBUG: response_closed.complete
+03:22:27 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:22:27 [httpcore.http11] DEBUG: send_request_headers.complete
+03:22:27 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:22:27 [httpcore.http11] DEBUG: send_request_body.complete
+03:22:27 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:22:30 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'916'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:22:30 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032227524662085BRJ8JDbf')])
+03:22:30 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:22:30 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:22:30 [httpcore.http11] DEBUG: receive_response_body.complete
+03:22:30 [httpcore.http11] DEBUG: response_closed.started
+03:22:30 [httpcore.http11] DEBUG: response_closed.complete
+03:22:31 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:22:31 [httpcore.http11] DEBUG: send_request_headers.complete
+03:22:31 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:22:31 [httpcore.http11] DEBUG: send_request_body.complete
+03:22:31 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:23:33 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'816'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:23:32 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032231107688949MFqM4h8d')])
+03:23:33 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:23:33 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:23:33 [httpcore.http11] DEBUG: receive_response_body.complete
+03:23:33 [httpcore.http11] DEBUG: response_closed.started
+03:23:33 [httpcore.http11] DEBUG: response_closed.complete
+03:23:33 [tools.registry] ERROR: Tool 'save_data' argument error: Orchestrator._save_data_tool() missing 1 required positional argument: 'data' Required params: ['data']. Missing: ['data']. You provided: []. Example: save_data(data=[{"key": "value", ...}], format="json")
+03:23:33 [execution.controller] INFO: Governor force stop: Time limit reached (300s)
+03:23:33 [management.orchestrator] INFO: Phase 1 complete: found 1 target pages
+03:23:33 [management.orchestrator] INFO: Phase 2: Extracting https://arxiv.org/list/cs.AI/recent (1/1)
+03:23:33 [execution.controller] INFO: Controller starting: https://arxiv.org/list/cs.AI/recent, role=extraction
+03:23:33 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:23:33 [httpcore.http11] DEBUG: send_request_headers.complete
+03:23:33 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:23:33 [httpcore.http11] DEBUG: send_request_body.complete
+03:23:33 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:23:36 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1018'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:23:35 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032333376865748eixTB0wH')])
+03:23:36 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:23:36 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:23:36 [httpcore.http11] DEBUG: receive_response_body.complete
+03:23:36 [httpcore.http11] DEBUG: response_closed.started
+03:23:36 [httpcore.http11] DEBUG: response_closed.complete
+03:23:37 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:23:37 [httpcore.http11] DEBUG: send_request_headers.complete
+03:23:37 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:23:37 [httpcore.http11] DEBUG: send_request_body.complete
+03:23:37 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:23:39 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'751'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:23:39 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'2026030403233682109053100lo2Pji')])
+03:23:39 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:23:39 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:23:39 [httpcore.http11] DEBUG: receive_response_body.complete
+03:23:39 [httpcore.http11] DEBUG: response_closed.started
+03:23:39 [httpcore.http11] DEBUG: response_closed.complete
+03:23:39 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:23:39 [httpcore.http11] DEBUG: send_request_headers.complete
+03:23:39 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:23:39 [httpcore.http11] DEBUG: send_request_body.complete
+03:23:39 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:23:49 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2615'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:23:47 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032339842536045yh8lSTSA')])
+03:23:49 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:23:49 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:23:49 [httpcore.http11] DEBUG: receive_response_body.complete
+03:23:49 [httpcore.http11] DEBUG: response_closed.started
+03:23:49 [httpcore.http11] DEBUG: response_closed.complete
+03:23:49 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:23:49 [httpcore.http11] DEBUG: send_request_headers.complete
+03:23:49 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:23:49 [httpcore.http11] DEBUG: send_request_body.complete
+03:23:49 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:23:57 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2630'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:23:56 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032349675781762KRymmV5y')])
+03:23:57 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:23:57 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:23:57 [httpcore.http11] DEBUG: receive_response_body.complete
+03:23:57 [httpcore.http11] DEBUG: response_closed.started
+03:23:57 [httpcore.http11] DEBUG: response_closed.complete
+03:23:57 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:23:57 [httpcore.http11] DEBUG: send_request_headers.complete
+03:23:57 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:23:57 [httpcore.http11] DEBUG: send_request_body.complete
+03:23:57 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:02 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1179'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:01 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032357620676392Sqs6ccUF')])
+03:24:02 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:02 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:02 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:02 [httpcore.http11] DEBUG: response_closed.started
+03:24:02 [httpcore.http11] DEBUG: response_closed.complete
+03:24:02 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:02 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:02 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:02 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:02 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:05 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'971'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:04 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032402432135251nkuky5K4')])
+03:24:05 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:05 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:05 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:05 [httpcore.http11] DEBUG: response_closed.started
+03:24:05 [httpcore.http11] DEBUG: response_closed.complete
+03:24:05 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:05 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:05 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:05 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:05 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:09 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1450'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:08 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032405632602719ub9ZOCce')])
+03:24:09 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:09 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:09 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:09 [httpcore.http11] DEBUG: response_closed.started
+03:24:09 [httpcore.http11] DEBUG: response_closed.complete
+03:24:10 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:10 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:10 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:10 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:10 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:12 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'751'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:11 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032410128162158VrBGr1jG')])
+03:24:12 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:12 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:12 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:12 [httpcore.http11] DEBUG: response_closed.started
+03:24:12 [httpcore.http11] DEBUG: response_closed.complete
+03:24:12 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:12 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:12 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:12 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:12 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:21 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2143'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:17 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'2026030403241256788034yOpMYmmp')])
+03:24:21 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:21 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:21 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:21 [httpcore.http11] DEBUG: response_closed.started
+03:24:21 [httpcore.http11] DEBUG: response_closed.complete
+03:24:22 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:22 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:22 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:22 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:22 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:27 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2258'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:27 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032421900088361r09T25bC')])
+03:24:27 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:27 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:27 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:27 [httpcore.http11] DEBUG: response_closed.started
+03:24:27 [httpcore.http11] DEBUG: response_closed.complete
+03:24:28 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:28 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:28 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:28 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:28 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:31 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'926'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:31 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032428247785278V5da0bFU')])
+03:24:31 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:31 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:31 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:31 [httpcore.http11] DEBUG: response_closed.started
+03:24:31 [httpcore.http11] DEBUG: response_closed.complete
+03:24:32 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:32 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:32 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:32 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:32 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:40 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2924'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:39 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032432422958022f5daCB9E')])
+03:24:40 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:40 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:40 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:40 [httpcore.http11] DEBUG: response_closed.started
+03:24:40 [httpcore.http11] DEBUG: response_closed.complete
+03:24:41 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:41 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:41 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:41 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:41 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:48 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2092'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:47 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032441377714234R7nzyMP')])
+03:24:48 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:48 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:48 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:48 [httpcore.http11] DEBUG: response_closed.started
+03:24:48 [httpcore.http11] DEBUG: response_closed.complete
+03:24:48 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:48 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:48 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:48 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:48 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:24:51 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1040'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:24:51 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032448650295476p2BIXv6N')])
+03:24:51 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:24:51 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:24:51 [httpcore.http11] DEBUG: receive_response_body.complete
+03:24:51 [httpcore.http11] DEBUG: response_closed.started
+03:24:51 [httpcore.http11] DEBUG: response_closed.complete
+03:24:52 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:24:52 [httpcore.http11] DEBUG: send_request_headers.complete
+03:24:52 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:24:52 [httpcore.http11] DEBUG: send_request_body.complete
+03:24:52 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:01 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'3188'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:00 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'2026030403245223046248803Jx4LAe')])
+03:25:01 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:01 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:01 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:01 [httpcore.http11] DEBUG: response_closed.started
+03:25:01 [httpcore.http11] DEBUG: response_closed.complete
+03:25:01 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:25:01 [httpcore.http11] DEBUG: send_request_headers.complete
+03:25:01 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:25:01 [httpcore.http11] DEBUG: send_request_body.complete
+03:25:01 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:05 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1221'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:04 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032501439744536IVMfhWIv')])
+03:25:05 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:05 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:05 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:05 [httpcore.http11] DEBUG: response_closed.started
+03:25:05 [httpcore.http11] DEBUG: response_closed.complete
+03:25:06 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:25:06 [httpcore.http11] DEBUG: send_request_headers.complete
+03:25:06 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:25:06 [httpcore.http11] DEBUG: send_request_body.complete
+03:25:06 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:09 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1074'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:08 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032506211016571QOEB7tMW')])
+03:25:09 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:09 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:09 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:09 [httpcore.http11] DEBUG: response_closed.started
+03:25:09 [httpcore.http11] DEBUG: response_closed.complete
+03:25:10 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:25:10 [httpcore.http11] DEBUG: send_request_headers.complete
+03:25:10 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:25:10 [httpcore.http11] DEBUG: send_request_body.complete
+03:25:10 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:15 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'1698'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:14 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'202603040325099382054278udEQY7m')])
+03:25:15 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:15 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:15 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:15 [httpcore.http11] DEBUG: response_closed.started
+03:25:15 [httpcore.http11] DEBUG: response_closed.complete
+03:25:15 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:25:15 [httpcore.http11] DEBUG: send_request_headers.complete
+03:25:15 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:25:15 [httpcore.http11] DEBUG: send_request_body.complete
+03:25:15 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:22 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2501'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:21 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032515767140186mnenoSZm')])
+03:25:22 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:22 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:22 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:22 [httpcore.http11] DEBUG: response_closed.started
+03:25:22 [httpcore.http11] DEBUG: response_closed.complete
+03:25:22 [httpcore.http11] DEBUG: send_request_headers.started request=<Request [b'POST']>
+03:25:22 [httpcore.http11] DEBUG: send_request_headers.complete
+03:25:22 [httpcore.http11] DEBUG: send_request_body.started request=<Request [b'POST']>
+03:25:22 [httpcore.http11] DEBUG: send_request_body.complete
+03:25:22 [httpcore.http11] DEBUG: receive_response_headers.started request=<Request [b'POST']>
+03:25:31 [httpcore.http11] DEBUG: receive_response_headers.complete return_value=(b'HTTP/1.1', 200, b'OK', [(b'Connection', b'keep-alive'), (b'Content-Length', b'2772'), (b'Content-Type', b'application/json'), (b'Date', b'Wed, 04 Mar 2026 03:25:29 GMT'), (b'Server', b'nginx/1.24.0 (Ubuntu)'), (b'X-New-Api-Version', b'0.4.22-alpha.4'), (b'X-Oneapi-Request-Id', b'20260304032522503487774wqlthGs5')])
+03:25:31 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+03:25:31 [httpcore.http11] DEBUG: receive_response_body.started request=<Request [b'POST']>
+03:25:31 [httpcore.http11] DEBUG: receive_response_body.complete
+03:25:31 [httpcore.http11] DEBUG: response_closed.started
+03:25:31 [httpcore.http11] DEBUG: response_closed.complete
+03:25:31 [execution.controller] INFO: Governor force stop: LLM call limit reached (20)
+03:25:31 [main] INFO: Results saved to /workspace/arxiv_results2.json
+
+鉂?Failed: Unknown
+Summary: Extracted 0 records from 1 pages
+

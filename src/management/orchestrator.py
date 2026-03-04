@@ -246,20 +246,30 @@ class Orchestrator:
             '- page_html (str): cleaned HTML of the current page\n'
             '- page_url (str): current page URL\n'
             '\n'
+            'Pre-loaded functions:\n'
+            '- save_records(records): Persist extracted records (list of dicts or single dict).\n'
+            '  Data saved via this function is automatically collected by the pipeline.\n'
+            '  ALWAYS call save_records() when your code produces data.\n'
+            '- report_urls(urls): Report discovered target URLs for extraction.\n'
+            '  Use during exploration to report pages that contain target data.\n'
+            '\n'
             'Available libraries: bs4, json, re, lxml, csv, collections\n'
             '\n'
             'WHEN TO USE: Complex HTML parsing, data transformation, regex extraction,\n'
             'or when extract_css doesn\'t capture what you need. This is your most\n'
             'powerful extraction tool — write Python the way a developer would.\n'
             '\n'
-            'Print results to stdout as JSON.\n'
-            '\n'
-            'Example:\n'
+            'Example (extraction):\n'
             '  from bs4 import BeautifulSoup\n'
-            '  import json\n'
             '  soup = BeautifulSoup(page_html, "html.parser")\n'
             '  items = [{"title": el.text.strip()} for el in soup.select(".product h3")]\n'
-            '  print(json.dumps(items))',
+            '  save_records(items)\n'
+            '\n'
+            'Example (exploration):\n'
+            '  from bs4 import BeautifulSoup\n'
+            '  soup = BeautifulSoup(page_html, "html.parser")\n'
+            '  urls = [a["href"] for a in soup.select("a[href]") if "/paper/" in a["href"]]\n'
+            '  report_urls(urls)',
             {"type": "object", "properties": {"code": {"type": "string", "description": "Python source code to execute. page_html and page_url are pre-loaded."}, "language": {"type": "string", "enum": ["python", "bash", "javascript"] if is_docker else ["python"], "description": "Programming language (default: python)"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}}, "required": ["code"]})
 
         if is_docker:
@@ -285,9 +295,10 @@ class Orchestrator:
 
         # --- Storage (2) ---
         registry.register("save_data", self._save_data_tool,
-            'Save extracted data records to file. Call this when you have data to persist.\n'
+            'Save extracted data records to file.\n'
+            'If called without data, automatically saves all records collected via save_records().\n'
             'Returns: {"saved": N, "path": "...", "format": "json"}',
-            {"type": "object", "properties": {"data": {"type": "array", "items": {"type": "object"}, "description": "Data records to save"}, "format": {"type": "string", "enum": ["json", "csv"], "description": "Output format (default json)"}}, "required": ["data"]})
+            {"type": "object", "properties": {"data": {"type": "array", "items": {"type": "object"}, "description": "Data records to save. If omitted, saves all records collected so far."}, "format": {"type": "string", "enum": ["json", "csv"], "description": "Output format (default json)"}}})
 
         registry.register("download_file", self._download_file_tool,
             "Download a file from a URL",
@@ -486,12 +497,28 @@ class Orchestrator:
 
             if language == "python":
                 preamble = (
-                    f'import os as _os\n'
+                    f'import os as _os, json as _json\n'
                     f'_ctx = r"{ctx_dir}"\n'
                     f'with open(_os.path.join(_ctx, "page.html"), "r", encoding="utf-8") as _f:\n'
                     f'    page_html = _f.read()\n'
                     f'with open(_os.path.join(_ctx, "page_url.txt"), "r") as _f:\n'
                     f'    page_url = _f.read().strip()\n'
+                    f'\n'
+                    f'def save_records(records):\n'
+                    f'    """Persist extracted records to the data pipeline. Call this to save your results."""\n'
+                    f'    _recs = records if isinstance(records, list) else [records]\n'
+                    f'    with open(_os.path.join(_ctx, "records.jsonl"), "a", encoding="utf-8") as _rf:\n'
+                    f'        for _r in _recs:\n'
+                    f'            _rf.write(_json.dumps(_r, ensure_ascii=False, default=str) + "\\n")\n'
+                    f'    print(f"Saved {{len(_recs)}} records")\n'
+                    f'\n'
+                    f'def report_urls(urls):\n'
+                    f'    """Report discovered target URLs for extraction. Use during exploration."""\n'
+                    f'    _urls = urls if isinstance(urls, list) else [urls]\n'
+                    f'    with open(_os.path.join(_ctx, "urls.txt"), "a", encoding="utf-8") as _uf:\n'
+                    f'        for _u in _urls:\n'
+                    f'            _uf.write(_u.strip() + "\\n")\n'
+                    f'    print(f"Reported {{len(_urls)}} URLs")\n'
                 )
                 code = preamble + "\n" + code
             elif language == "bash":
@@ -501,7 +528,37 @@ class Orchestrator:
                 )
                 code = preamble + code
 
-            return await execute_code(code, language, timeout)
+            result = await execute_code(code, language, timeout)
+
+            # Read side-channel files (records and urls written by helper functions)
+            records_file = os.path.join(ctx_dir, "records.jsonl")
+            if os.path.exists(records_file):
+                collected = []
+                with open(records_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                collected.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+                if collected:
+                    result["_records"] = collected
+                    logger.info(f"execute_code side-channel: {len(collected)} records collected")
+
+            urls_file = os.path.join(ctx_dir, "urls.txt")
+            if os.path.exists(urls_file):
+                discovered = []
+                with open(urls_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            discovered.append(line)
+                if discovered:
+                    result["_urls"] = discovered
+                    logger.info(f"execute_code side-channel: {len(discovered)} URLs reported")
+
+            return result
         finally:
             shutil.rmtree(ctx_dir, ignore_errors=True)
 

@@ -67,16 +67,28 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are exploring a website to understand its structure and find pages containing target data. This is the exploration phase.
+            role_text = """You are exploring a website to discover pages containing target data. This is the exploration phase — your output is URLs, not data.
 
-Use the available tools to navigate, analyze pages and links, and discover relevant URLs.
-Take the time you need to understand the site. When you have identified enough target pages
-for the extraction task, stop and list them in your final message."""
+Use navigate to visit pages, analyze_links to understand site structure, and execute_code with report_urls() to report target pages you discover.
+
+Example workflow:
+1. Navigate to the start URL
+2. Analyze the page structure (analyze_page, get_html, execute_code)
+3. Find links to pages that contain the target data
+4. Call report_urls() in execute_code to report those URLs
+5. Navigate deeper if needed, repeat
+
+When you have identified enough target pages, stop and summarize what you found."""
         else:
-            role_text = """You are a web data extraction expert. Your goal is to extract structured data from web pages according to the specification.
+            role_text = """You are a web data extraction expert. Your goal is to extract structured data from web pages.
 
-Use the available tools to navigate, analyze, and extract data. Save extracted data using save_data.
-Verify quality before finishing. If extraction fails with one approach, try alternatives."""
+Use execute_code with save_records() as your primary extraction method:
+1. Navigate to the target page
+2. Write Python with BeautifulSoup to parse page_html
+3. Call save_records(items) to persist extracted data
+4. Check progress — the pipeline shows how many records you've collected
+
+If extraction fails with one approach, try alternatives (different selectors, execute_code, evaluate_js)."""
 
         site_context = task.get("site_context", "")
         if site_context:
@@ -86,13 +98,11 @@ Verify quality before finishing. If extraction fails with one approach, try alte
 Rules:
 - Call tools to interact with the page. Do not hallucinate data.
 - If a tool fails, try a different approach (different selector, execute_code, etc.)
-- execute_code runs Python with page_html and page_url pre-loaded. For complex
-  extraction, write Python with BeautifulSoup — it is more reliable than
-  chaining multiple tools.
+- execute_code is your most powerful tool. It runs Python with page_html pre-loaded.
+  Use save_records() to persist extracted data. Use report_urls() to report found URLs.
 - extract_css is a shortcut for simple, well-structured pages. Switch to
   execute_code when structure is complex or nested.
 - evaluate_js runs JavaScript in the browser for live DOM access (SPA, dynamic content).
-- Save data incrementally. Don't wait until the end.
 - When you believe the task is complete, stop calling tools and say "TASK COMPLETE" with a summary."""
 
         return {"role": "system", "content": role_text + rules}
@@ -123,16 +133,22 @@ Rules:
         # Progress stats — let the agent see its own state
         if progress:
             min_items = getattr(spec, "min_items", 0) if spec else 0
-            collected = progress.get("records_collected", 0)
-            target_note = f" (target: ≥{min_items})" if min_items else ""
-            status = " ✓" if min_items and collected >= min_items else ""
+            role = progress.get("role", "extraction")
 
             progress_lines = ["\nCurrent progress:"]
-            progress_lines.append(f"- Records collected: {collected}{target_note}{status}")
 
-            field_stats = progress.get("fields")
-            if field_stats:
-                progress_lines.append(f"- Field coverage: {field_stats}")
+            if role == "exploration":
+                urls_found = progress.get("urls_found", 0)
+                progress_lines.append(f"- Target URLs found: {urls_found}")
+            else:
+                collected = progress.get("records_collected", 0)
+                target_note = f" (target: ≥{min_items})" if min_items else ""
+                status = " ✓" if min_items and collected >= min_items else ""
+                progress_lines.append(f"- Records collected: {collected}{target_note}{status}")
+
+                field_stats = progress.get("fields")
+                if field_stats:
+                    progress_lines.append(f"- Field coverage: {field_stats}")
 
             steps_remaining = progress.get("steps_remaining")
             steps_taken = progress.get("steps_taken", 0)

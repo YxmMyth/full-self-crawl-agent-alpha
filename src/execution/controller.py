@@ -41,6 +41,7 @@ class CrawlController:
         self.history = StepHistory()
         self._step_number = 0
         self._collected_data: list[dict] = []
+        self._discovered_urls: list[str] = []
 
     async def run(self, task: dict) -> dict:
         """Execute a crawl task with the LLM-as-Controller loop.
@@ -67,7 +68,7 @@ class CrawlController:
         self.governor.start()
         stop_reason = ""
         summary = ""
-        new_links = []
+        new_links = self._discovered_urls  # shared reference for side-channel collection
 
         logger.info(f"Controller starting: {task.get('url', 'unknown')}, role={task.get('role', 'extraction')}")
 
@@ -101,6 +102,13 @@ class CrawlController:
 
                 self.governor.record_llm_call(decision.total_tokens)
 
+                # Log what LLM decided
+                if decision.tool_calls:
+                    tool_names = [tc.name for tc in decision.tool_calls]
+                    logger.info(f"Step {self._step_number+1}: LLM calls {tool_names}")
+                else:
+                    logger.info(f"Step {self._step_number}: LLM returned text only (finish_reason={decision.finish_reason})")
+
                 # 4. If LLM wants to stop (no tool calls)
                 if decision.wants_to_stop:
                     stop_reason = "LLM completed"
@@ -132,6 +140,10 @@ class CrawlController:
                     # Collect data from extract_css results
                     if tc.name == "extract_css" and result.success:
                         self._extract_css_data(result.content)
+
+                    # Collect records/urls from execute_code side-channel
+                    if tc.name in ("execute_code", "bash") and result.success:
+                        self._collect_side_channel(result, new_links)
 
                     # Collect data from save_data calls
                     if tc.name == "save_data" and result.success:
@@ -238,7 +250,9 @@ class CrawlController:
     def _compute_progress(self, task: dict) -> dict:
         """Compute progress stats for context injection."""
         return {
+            "role": task.get("role", "extraction"),
             "records_collected": len(self._collected_data),
+            "urls_found": len(self._discovered_urls),
             "fields": self._summarize_fields(),
             "steps_taken": self.history.count,
             "steps_remaining": self.governor.max_steps - self.history.count,
@@ -292,3 +306,31 @@ class CrawlController:
             pass
 
     def _extract_saved_data(self, args: dict) -> None:
+        """Extract records from save_data arguments into collected data."""
+        data = args.get("data", [])
+        if isinstance(data, list) and data:
+            self._collected_data.extend(data)
+            logger.debug(f"Collected {len(data)} records from save_data")
+
+    def _collect_side_channel(self, result: ToolResult, new_links: list) -> None:
+        """Collect records and URLs from execute_code side-channel, strip from LLM context."""
+        try:
+            data = json.loads(result.content)
+            if not isinstance(data, dict):
+                return
+            records = data.pop("_records", [])
+            urls = data.pop("_urls", [])
+
+            if records:
+                self._collected_data.extend(records)
+                data["_saved"] = f"{len(records)} records saved via save_records()"
+                logger.info(f"Side-channel: collected {len(records)} records from execute_code")
+            if urls:
+                new_links.extend(urls)
+                data["_reported"] = f"{len(urls)} URLs reported via report_urls()"
+                logger.info(f"Side-channel: collected {len(urls)} URLs from execute_code")
+
+            if records or urls:
+                result.content = json.dumps(data, default=str, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            pass

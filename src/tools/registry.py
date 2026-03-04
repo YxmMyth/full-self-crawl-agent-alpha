@@ -181,6 +181,7 @@ class ToolRegistry:
         Returns:
             {"success": bool, "result": Any, "error": str | None}
         """
+        logger.info(f"Executing tool: {name} args={list(arguments.keys())}")
         tool = self._tools.get(name)
         if not tool:
             return {

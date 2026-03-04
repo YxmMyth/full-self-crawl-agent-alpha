@@ -1,0 +1,16 @@
+04:01:49 [main] INFO: Starting crawl: https://arxiv.org/list/cs.AI/recent
+04:01:49 [main] INFO: Mode: full_site, Model: claude-sonnet-4-5-20250929
+04:01:49 [management.orchestrator] INFO: Task 538f1a1c: https://arxiv.org/list/cs.AI/recent mode=full_site
+04:01:50 [tools.browser] INFO: Browser started
+04:01:58 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+04:01:58 [management.orchestrator] INFO: Phase 1: Exploring https://arxiv.org/list/cs.AI/recent
+04:01:58 [execution.controller] INFO: Controller starting: https://arxiv.org/list/cs.AI/recent, role=exploration
+04:02:00 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+04:02:00 [execution.controller] INFO: Step 1: LLM calls ['navigate']
+04:02:00 [tools.registry] INFO: Executing tool: navigate args=['url']
+04:02:03 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+04:02:03 [execution.controller] INFO: Step 2: LLM calls ['analyze_page']
+04:02:03 [tools.registry] INFO: Executing tool: analyze_page args=[]
+04:02:05 [httpx] INFO: HTTP Request: POST http://45.78.224.156:3000/v1/chat/completions "HTTP/1.1 200 OK"
+04:02:05 [execution.controller] INFO: Step 3: LLM calls ['get_html']
+04:02:05 [tools.registry] INFO: Executing tool: get_html args=['selector']
