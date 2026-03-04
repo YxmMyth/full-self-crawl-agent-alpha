@@ -42,11 +42,16 @@ class ArtifactManager:
 
     def init_run(self) -> None:
         """Clean and create artifacts directory for a fresh run."""
+        # Clear contents but not the dir itself (may be a Docker mount point)
         if self.base_dir.exists():
-            shutil.rmtree(self.base_dir)
-        self.base_dir.mkdir(parents=True)
-        self.data_dir.mkdir()
-        self.files_dir.mkdir()
+            for child in self.base_dir.iterdir():
+                if child.is_dir():
+                    shutil.rmtree(child)
+                else:
+                    child.unlink()
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.data_dir.mkdir(exist_ok=True)
+        self.files_dir.mkdir(exist_ok=True)
         self._records = []
         self._files = []
         self._started_at = datetime.utcnow().isoformat() + "Z"
