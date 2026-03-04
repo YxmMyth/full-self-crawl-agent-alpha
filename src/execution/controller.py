@@ -41,6 +41,7 @@ class CrawlController:
         self.history = StepHistory()
         self._step_number = 0
         self._collected_data: list[dict] = []
+        self._collected_files: list[dict] = []
         self._discovered_urls: list[str] = []
 
     async def run(self, task: dict) -> dict:
@@ -128,7 +129,7 @@ class CrawlController:
                         # Replace the result to avoid huge data in context
                         result.content = json.dumps({
                             "saved": len(self._collected_data),
-                            "path": "evidence/extracted_data." + tc.arguments.get("format", "json"),
+                            "path": "artifacts/data/extracted_data." + tc.arguments.get("format", "json"),
                             "format": tc.arguments.get("format", "json"),
                             "note": "auto-saved all records collected via save_records()"
                         })
@@ -164,9 +165,18 @@ class CrawlController:
                     if tc.name == "extract_css" and result.success:
                         self._extract_css_data(result.content)
 
-                    # Collect records/urls from execute_code side-channel
+                    # Collect records/urls/files from execute_code side-channel
                     if tc.name in ("execute_code", "bash") and result.success:
                         self._collect_side_channel(result, new_links)
+
+                    # Track files from download_file tool
+                    if tc.name == "download_file" and result.success:
+                        try:
+                            data = json.loads(result.content)
+                            if isinstance(data, dict) and data.get("success"):
+                                self._collected_files.append(data)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
 
                     # Collect data from save_data calls
                     if tc.name == "save_data" and result.success:
@@ -191,6 +201,7 @@ class CrawlController:
         return {
             "success": stop_reason in ("LLM completed", ""),
             "data": self._collected_data,
+            "files": self._collected_files,
             "steps": self.history.count,
             "stop_reason": stop_reason,
             "summary": summary,
@@ -275,6 +286,7 @@ class CrawlController:
         return {
             "role": task.get("role", "extraction"),
             "records_collected": len(self._collected_data),
+            "files_collected": len(self._collected_files),
             "urls_found": len(self._discovered_urls),
             "fields": self._summarize_fields(),
             "steps_taken": self.history.count,
@@ -336,13 +348,14 @@ class CrawlController:
             logger.debug(f"Collected {len(data)} records from save_data")
 
     def _collect_side_channel(self, result: ToolResult, new_links: list) -> None:
-        """Collect records and URLs from execute_code side-channel, strip from LLM context."""
+        """Collect records, URLs, and files from execute_code side-channel, strip from LLM context."""
         try:
             data = json.loads(result.content)
             if not isinstance(data, dict):
                 return
             records = data.pop("_records", [])
             urls = data.pop("_urls", [])
+            files = data.pop("_files", [])
 
             if records:
                 self._collected_data.extend(records)
@@ -352,8 +365,12 @@ class CrawlController:
                 new_links.extend(urls)
                 data["_reported"] = f"{len(urls)} URLs reported via report_urls()"
                 logger.info(f"Side-channel: collected {len(urls)} URLs from execute_code")
+            if files:
+                self._collected_files.extend(files)
+                data["_files_saved"] = f"{len(files)} files saved via save_file()"
+                logger.info(f"Side-channel: collected {len(files)} file artifacts from execute_code")
 
-            if records or urls:
+            if records or urls or files:
                 result.content = json.dumps(data, default=str, ensure_ascii=False)
         except (json.JSONDecodeError, TypeError):
             pass

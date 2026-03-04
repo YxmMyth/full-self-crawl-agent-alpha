@@ -7,6 +7,7 @@ __pycache__/
 # Runtime output (regenerated each run)
 evidence/
 downloads/
+artifacts/
 states/
 output.json
 

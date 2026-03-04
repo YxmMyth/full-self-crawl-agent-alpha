@@ -89,6 +89,13 @@ async def main():
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False, default=str)
 
+        # Also save to artifacts/report.json if artifacts dir exists
+        artifacts_dir = result.get("artifacts_dir")
+        if artifacts_dir:
+            report_path = Path(artifacts_dir) / "report.json"
+            with open(report_path, "w", encoding="utf-8") as f:
+                json.dump(result, f, indent=2, ensure_ascii=False, default=str)
+
         logger.info(f"Results saved to {output_path}")
 
         # Print summary

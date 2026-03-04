@@ -161,6 +161,10 @@ Rules:
                 if field_stats:
                     progress_lines.append(f"- Field coverage: {field_stats}")
 
+            files_collected = progress.get("files_collected", 0)
+            if files_collected:
+                progress_lines.append(f"- Files collected: {files_collected}")
+
             steps_remaining = progress.get("steps_remaining")
             steps_taken = progress.get("steps_taken", 0)
             if steps_remaining is not None:

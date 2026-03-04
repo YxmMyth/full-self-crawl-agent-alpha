@@ -70,6 +70,7 @@ class Orchestrator:
         self._llm = None
         self._tools = None
         self._state_mgr = None
+        self._artifacts = None
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -92,6 +93,11 @@ class Orchestrator:
             # 1. Initialize components
             await self._init_components()
 
+            # 1.5. Initialize artifacts (clean start)
+            from ..tools.artifacts import ArtifactManager
+            self._artifacts = ArtifactManager()
+            self._artifacts.init_run()
+
             # 2. Build or infer spec
             spec = await self._build_spec(start_url, requirement, spec_dict)
 
@@ -113,6 +119,20 @@ class Orchestrator:
             # 6. Update state
             status = "completed" if result.get("success") else "failed"
             self._state_mgr.update(task_id, status=status)
+
+            # 7. Write artifacts manifest
+            if self._artifacts:
+                self._artifacts.add_records(result.get("data", []))
+                self._artifacts.save_records_file()
+                self._artifacts.write_manifest({
+                    "task_id": task_id,
+                    "url": start_url,
+                    "mode": mode,
+                    "success": result.get("success", False),
+                    "summary": result.get("summary", ""),
+                })
+                result["artifacts_dir"] = str(self._artifacts.base_dir)
+                result["files"] = self._artifacts.files
 
             return result
 
@@ -252,6 +272,9 @@ class Orchestrator:
             '  ALWAYS call save_records() when your code produces data.\n'
             '- report_urls(urls): Report discovered target URLs for extraction.\n'
             '  Use during exploration to report pages that contain target data.\n'
+            '- save_file(url, description=""): Download and save a file (PDF, image, dataset, etc.).\n'
+            '  The file is saved as an artifact and tracked in the output manifest.\n'
+            '  Use when you find valuable files to collect as samples.\n'
             '\n'
             'Available libraries: bs4, json, re, lxml, csv, collections\n'
             '\n'
@@ -301,8 +324,19 @@ class Orchestrator:
             {"type": "object", "properties": {"data": {"type": "array", "items": {"type": "object"}, "description": "Data records to save. If omitted, saves all records collected so far."}, "format": {"type": "string", "enum": ["json", "csv"], "description": "Output format (default json)"}}})
 
         registry.register("download_file", self._download_file_tool,
-            "Download a file from a URL",
-            {"type": "object", "properties": {"url": {"type": "string", "description": "URL to download"}, "filename": {"type": "string", "description": "Optional filename"}}, "required": ["url"]})
+            'Download a file (PDF, image, dataset, archive, etc.) from a URL.\n'
+            'File is saved to artifacts/files/ and tracked in the output manifest.\n'
+            'Use when you find valuable files to include as samples.\n'
+            'Returns: {"filename": "...", "size": N, "type": "pdf", "success": true}',
+            {"type": "object", "properties": {"url": {"type": "string", "description": "URL of the file to download"}, "filename": {"type": "string", "description": "Optional filename (auto-detected from URL if omitted)"}, "description": {"type": "string", "description": "What this file is (e.g. 'sample research paper')"}}, "required": ["url"]})
+
+        registry.register("inspect_file", self._inspect_file_tool,
+            'Inspect a downloaded file and return metadata.\n'
+            'For PDFs: pages, text extractability, metadata, first page preview.\n'
+            'For images: dimensions, format, color mode.\n'
+            'For CSV/JSON: row/item counts, headers.\n'
+            'Use to assess file quality before deciding if it is a good sample.',
+            {"type": "object", "properties": {"filename": {"type": "string", "description": "Name of the file in artifacts/files/ to inspect"}}, "required": ["filename"]})
 
         self._tools = registry
         return registry
@@ -335,6 +369,7 @@ class Orchestrator:
         from .governor import Governor
 
         all_data = []
+        all_files = []
 
         # --- Phase 1: Exploration ---
         logger.info(f"Phase 1: Exploring {url}")
@@ -410,7 +445,9 @@ class Orchestrator:
 
             result = await extract_controller.run(extract_task)
             page_data = result.get("data", [])
+            page_files = result.get("files", [])
             all_data.extend(page_data)
+            all_files.extend(page_files)
             pages_extracted += 1
 
             self._state_mgr.record_page_visit(task_id, task_item.url)
@@ -432,15 +469,22 @@ class Orchestrator:
                 logger.info(f"Completion gate met: {decision.reason}")
                 break
 
+        # Track files in artifact manager
+        if self._artifacts and all_files:
+            self._artifacts.add_files(all_files)
+
+        file_summary = f", {len(all_files)} files" if all_files else ""
         return {
-            "success": len(all_data) > 0,
+            "success": len(all_data) > 0 or len(all_files) > 0,
             "data": all_data,
+            "files": all_files,
             "pages_extracted": pages_extracted,
-            "summary": f"Extracted {len(all_data)} records from {pages_extracted} pages",
+            "summary": f"Extracted {len(all_data)} records{file_summary} from {pages_extracted} pages",
             "metrics": {
                 "pages_found": len(target_urls),
                 "pages_extracted": pages_extracted,
                 "records": len(all_data),
+                "files": len(all_files),
             },
         }
 
@@ -495,10 +539,14 @@ class Orchestrator:
                     url = ""
             Path(os.path.join(ctx_dir, "page_url.txt")).write_text(url, encoding="utf-8")
 
+            artifacts_dir = str(self._artifacts.files_dir) if self._artifacts else "./artifacts/files"
+
             if language == "python":
                 preamble = (
                     f'import os as _os, json as _json\n'
                     f'_ctx = r"{ctx_dir}"\n'
+                    f'_artifacts_files = r"{artifacts_dir}"\n'
+                    f'_os.makedirs(_artifacts_files, exist_ok=True)\n'
                     f'with open(_os.path.join(_ctx, "page.html"), "r", encoding="utf-8") as _f:\n'
                     f'    page_html = _f.read()\n'
                     f'with open(_os.path.join(_ctx, "page_url.txt"), "r") as _f:\n'
@@ -519,6 +567,23 @@ class Orchestrator:
                     f'        for _u in _urls:\n'
                     f'            _uf.write(_u.strip() + "\\n")\n'
                     f'    print(f"Reported {{len(_urls)}} URLs")\n'
+                    f'\n'
+                    f'def save_file(url, description=""):\n'
+                    f'    """Download and save a file (PDF, image, dataset, etc.) as an artifact.\n'
+                    f'    The file is saved to the artifacts directory and tracked in the pipeline.\n'
+                    f'    Args: url (str), description (str) - what this file is."""\n'
+                    f'    import urllib.request, hashlib\n'
+                    f'    _fname = url.split("/")[-1].split("?")[0]\n'
+                    f'    if not _fname or len(_fname) > 200:\n'
+                    f'        _fname = "file_" + hashlib.md5(url.encode()).hexdigest()[:8]\n'
+                    f'    _fpath = _os.path.join(_artifacts_files, _fname)\n'
+                    f'    urllib.request.urlretrieve(url, _fpath)\n'
+                    f'    _size = _os.path.getsize(_fpath)\n'
+                    f'    _ext = _os.path.splitext(_fname)[1].lower()\n'
+                    f'    _type_map = {{".pdf":"pdf",".png":"image",".jpg":"image",".jpeg":"image",".gif":"image",".csv":"csv",".json":"json",".zip":"archive",".xlsx":"excel"}}\n'
+                    f'    with open(_os.path.join(_ctx, "files.jsonl"), "a", encoding="utf-8") as _ff:\n'
+                    f'        _ff.write(_json.dumps({{"url":url,"filename":_fname,"size":_size,"type":_type_map.get(_ext,"file"),"description":description}}, ensure_ascii=False) + "\\n")\n'
+                    f'    print(f"Saved file: {{_fname}} ({{_size}} bytes)")\n'
                 )
                 code = preamble + "\n" + code
             elif language == "bash":
@@ -558,6 +623,22 @@ class Orchestrator:
                     result["_urls"] = discovered
                     logger.info(f"execute_code side-channel: {len(discovered)} URLs reported")
 
+            # Read files side-channel (file metadata written by save_file())
+            files_file = os.path.join(ctx_dir, "files.jsonl")
+            if os.path.exists(files_file):
+                file_metas = []
+                with open(files_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                file_metas.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+                if file_metas:
+                    result["_files"] = file_metas
+                    logger.info(f"execute_code side-channel: {len(file_metas)} files saved")
+
             return result
         finally:
             shutil.rmtree(ctx_dir, ignore_errors=True)
@@ -582,28 +663,47 @@ class Orchestrator:
         return cleaned.strip()
 
     async def _save_data_tool(self, data: list, format: str = "json") -> dict:
-        """Tool: save extracted data."""
+        """Tool: save extracted data to artifacts directory."""
+        if self._artifacts:
+            return self._artifacts.save_export(data, format)
+        # Fallback if artifacts not initialized
         import os
         from ..tools.storage import DataExport
         exporter = DataExport()
-        os.makedirs("./evidence", exist_ok=True)
-        filepath = f"./evidence/extracted_data.{format}"
+        os.makedirs("./artifacts/data", exist_ok=True)
+        filepath = f"./artifacts/data/extracted_data.{format}"
         if format == "csv":
             exporter.to_csv(data, filepath)
         else:
             exporter.to_json(data, filepath)
         return {"saved": len(data), "path": filepath, "format": format}
 
-    async def _download_file_tool(self, url: str, filename: str = "") -> dict:
-        """Tool: download a file."""
+    async def _download_file_tool(self, url: str, filename: str = "", description: str = "") -> dict:
+        """Tool: download a file to artifacts."""
         from ..tools.downloader import FileDownloader
-        downloader = FileDownloader()
-        # Infer file_type from URL
+        dl_dir = str(self._artifacts.files_dir) if self._artifacts else "./artifacts/files"
+        os.makedirs(dl_dir, exist_ok=True)
+        downloader = FileDownloader(download_dir=dl_dir)
         from urllib.parse import urlparse
         path = urlparse(url).path
         ext = path.rsplit(".", 1)[-1] if "." in path else "bin"
-        result = downloader.download(url, file_type=ext, filename=filename or None)
+        result = await downloader.download(url, file_type=ext, filename=filename or None)
+        # Track in artifact manager
+        if result.get("success") and self._artifacts:
+            self._artifacts.add_file({
+                "url": url,
+                "filename": result.get("name", ""),
+                "size": result.get("size", 0),
+                "type": ext,
+                "description": description,
+            })
         return result
+
+    async def _inspect_file_tool(self, filename: str) -> dict:
+        """Tool: inspect a downloaded file and return metadata."""
+        if self._artifacts:
+            return self._artifacts.inspect_file(filename)
+        return {"error": "Artifacts not initialized"}
 
     async def cleanup(self) -> None:
         """Release resources."""

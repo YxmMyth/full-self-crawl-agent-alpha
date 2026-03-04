@@ -22,7 +22,7 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
 
 # Workspace for agent file I/O
-RUN mkdir -p /workspace/evidence /workspace/downloads /workspace/tmp
+RUN mkdir -p /workspace/artifacts/data /workspace/artifacts/files /workspace/tmp
 
 # ---- Stage 2: dev (source mounted via volume) ----
 FROM base AS dev
