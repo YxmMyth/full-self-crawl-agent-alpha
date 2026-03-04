@@ -9,9 +9,14 @@ Migrated from old project's browser.py with additional methods:
 """
 
 from typing import Any, Dict, List, Optional, Tuple
-from playwright.async_api import (
-    async_playwright, Browser, Page, Error as PlaywrightError,
-)
+try:
+    from rebrowser_playwright.async_api import (
+        async_playwright, Browser, Page, Error as PlaywrightError,
+    )
+except ImportError:
+    from playwright.async_api import (
+        async_playwright, Browser, Page, Error as PlaywrightError,
+    )
 import asyncio
 import functools
 import random
@@ -92,31 +97,70 @@ class BrowserTool:
                 logger.warning(message)
 
     async def start(self) -> None:
-        """Launch browser."""
+        """Launch browser (local or connect to remote via CDP)."""
         import os
         try:
             self.playwright = await async_playwright().start()
-            self.browser = await self.playwright.chromium.launch(
-                headless=self.headless,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--disable-dev-shm-usage",
-                    "--no-sandbox",
-                ],
-            )
-            # Load saved auth state if available
-            storage_state = None
-            state_path = os.environ.get("BROWSER_STORAGE_STATE", "")
-            if state_path and os.path.exists(state_path):
-                storage_state = state_path
-                self._storage_state_path = state_path
-                logger.info(f"Loading browser auth state from {state_path}")
 
-            self.context = await self.browser.new_context(
-                viewport={"width": 1920, "height": 1080},
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-                storage_state=storage_state,
-            )
+            # Remote browser via CDP (bypasses CF by using a real browser)
+            cdp_url = os.environ.get("BROWSER_CDP_URL", "")
+            if cdp_url:
+                # Chrome rejects non-IP Host headers; resolve ws:// URL ourselves
+                if cdp_url.startswith("http"):
+                    import urllib.request, json
+                    from urllib.parse import urlparse
+                    parsed = urlparse(cdp_url)
+                    try:
+                        req = urllib.request.Request(
+                            f"{cdp_url}/json/version",
+                            headers={"Host": "localhost"}
+                        )
+                        resp = urllib.request.urlopen(req, timeout=5)
+                        ws_url = json.loads(resp.read())["webSocketDebuggerUrl"]
+                        # Build ws URL with correct host and port for Docker
+                        ws_parsed = urlparse(ws_url)
+                        port = parsed.port or 9222
+                        cdp_url = f"ws://{parsed.hostname}:{port}{ws_parsed.path}"
+                        logger.info(f"Resolved CDP ws URL: {cdp_url}")
+                    except Exception as e:
+                        logger.warning(f"Could not resolve ws URL, using original: {e}")
+
+                self.browser = await self.playwright.chromium.connect_over_cdp(cdp_url)
+                logger.info(f"Connected to remote browser at {cdp_url}")
+                # Use existing context if available, otherwise create new
+                contexts = self.browser.contexts
+                if contexts:
+                    self.context = contexts[0]
+                    pages = self.context.pages
+                    self.page = pages[0] if pages else await self.context.new_page()
+                    logger.info(f"Reusing existing context with {len(pages)} pages")
+                else:
+                    self.context = await self.browser.new_context(
+                        viewport={"width": 1920, "height": 1080},
+                    )
+                    self.page = await self.context.new_page()
+            else:
+                self.browser = await self.playwright.chromium.launch(
+                    headless=self.headless,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--disable-dev-shm-usage",
+                        "--no-sandbox",
+                    ],
+                )
+                # Load saved auth state if available
+                storage_state = None
+                state_path = os.environ.get("BROWSER_STORAGE_STATE", "")
+                if state_path and os.path.exists(state_path):
+                    storage_state = state_path
+                    self._storage_state_path = state_path
+                    logger.info(f"Loading browser auth state from {state_path}")
+
+                self.context = await self.browser.new_context(
+                    viewport={"width": 1920, "height": 1080},
+                    user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+                    storage_state=storage_state,
+                )
             self.page = await self.context.new_page()
 
             # Inject credentials into page JS context (agent retrieves via evaluate_js)

@@ -19,10 +19,12 @@ WORKDIR /app
 
 # Alpha project dependencies (some already in base image)
 COPY requirements.txt .
+# Remove base-image playwright so rebrowser-playwright takes over
+RUN pip uninstall -y playwright 2>/dev/null || true
 RUN pip install --no-cache-dir -r requirements.txt 2>/dev/null || true
 
 # Ensure rebrowser-playwright browsers are installed
-RUN playwright install chromium 2>/dev/null || true
+RUN python -m rebrowser_playwright install chromium 2>/dev/null || playwright install chromium 2>/dev/null || true
 
 # Workspace for agent file I/O
 RUN mkdir -p /workspace/artifacts/data /workspace/artifacts/files /workspace/tmp
