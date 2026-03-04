@@ -1,12 +1,18 @@
+# Python
 __pycache__/
 *.pyc
 .pytest_cache/
 *.egg-info/
+
+# Runtime output (regenerated each run)
 evidence/
 downloads/
 states/
-.env
-logs/
-
 output.json
-evidence/
+
+# Logs
+logs/
+*.log
+
+# Secrets
+.env
