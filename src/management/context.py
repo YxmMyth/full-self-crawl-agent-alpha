@@ -31,7 +31,7 @@ class ContextManager:
         self.max_tokens = max_tokens
 
     def build(self, task: dict, history, tools_schema: list[dict],
-              nudges: str | None = None) -> list[dict]:
+              nudges: str | None = None, progress: dict | None = None) -> list[dict]:
         """Build complete messages array for one LLM turn.
 
         Args:
@@ -39,6 +39,7 @@ class ContextManager:
             history: StepHistory instance
             tools_schema: OpenAI function calling schemas
             nudges: Optional governance nudges to inject
+            progress: Optional progress stats {records_collected, fields, steps_taken, steps_remaining}
 
         Returns:
             List of message dicts for the LLM API.
@@ -48,8 +49,8 @@ class ContextManager:
         # 1. System prompt
         messages.append(self._system_prompt(task))
 
-        # 2. Task context
-        messages.append(self._task_context(task))
+        # 2. Task context (includes progress)
+        messages.append(self._task_context(task, progress))
 
         # 3. Compressed history as assistant/tool message pairs
         history_messages = self._compress_history(history)
@@ -66,10 +67,11 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are a web site exploration expert. Your goal is to understand the site structure and find pages containing the target data.
+            role_text = """You are exploring a website to understand its structure and find pages containing target data. This is the exploration phase.
 
 Use the available tools to navigate, analyze pages and links, and discover relevant URLs.
-When you have identified the target pages, stop and list them in your final message."""
+Take the time you need to understand the site. When you have identified enough target pages
+for the extraction task, stop and list them in your final message."""
         else:
             role_text = """You are a web data extraction expert. Your goal is to extract structured data from web pages according to the specification.
 
@@ -84,13 +86,18 @@ Verify quality before finishing. If extraction fails with one approach, try alte
 Rules:
 - Call tools to interact with the page. Do not hallucinate data.
 - If a tool fails, try a different approach (different selector, execute_code, etc.)
-- execute_code is your escape hatch — if specialized tools don't work, write code.
+- execute_code runs Python with page_html and page_url pre-loaded. For complex
+  extraction, write Python with BeautifulSoup — it is more reliable than
+  chaining multiple tools.
+- extract_css is a shortcut for simple, well-structured pages. Switch to
+  execute_code when structure is complex or nested.
+- evaluate_js runs JavaScript in the browser for live DOM access (SPA, dynamic content).
 - Save data incrementally. Don't wait until the end.
 - When you believe the task is complete, stop calling tools and say "TASK COMPLETE" with a summary."""
 
         return {"role": "system", "content": role_text + rules}
 
-    def _task_context(self, task: dict) -> dict:
+    def _task_context(self, task: dict, progress: dict | None = None) -> dict:
         """Build task context message with spec and progress."""
         spec = task.get("spec")
         url = task.get("url", "")
@@ -113,10 +120,36 @@ Rules:
             elif isinstance(spec, dict):
                 parts.append(f"Requirement: {spec.get('requirement', '')}")
 
-        # Progress
-        progress = task.get("progress")
+        # Progress stats — let the agent see its own state
         if progress:
-            parts.append(f"\nProgress: {progress}")
+            min_items = getattr(spec, "min_items", 0) if spec else 0
+            collected = progress.get("records_collected", 0)
+            target_note = f" (target: ≥{min_items})" if min_items else ""
+            status = " ✓" if min_items and collected >= min_items else ""
+
+            progress_lines = ["\nCurrent progress:"]
+            progress_lines.append(f"- Records collected: {collected}{target_note}{status}")
+
+            field_stats = progress.get("fields")
+            if field_stats:
+                progress_lines.append(f"- Field coverage: {field_stats}")
+
+            steps_remaining = progress.get("steps_remaining")
+            steps_taken = progress.get("steps_taken", 0)
+            if steps_remaining is not None:
+                progress_lines.append(f"- Steps: {steps_taken} taken, {steps_remaining} remaining")
+
+            parts.extend(progress_lines)
+
+        # Prior experience from previous pages
+        prior = task.get("prior_experience")
+        if prior:
+            parts.append(f"\nPrior experience: {prior}")
+
+        # Legacy progress field
+        legacy_progress = task.get("progress")
+        if legacy_progress:
+            parts.append(f"\nProgress: {legacy_progress}")
 
         return {"role": "user", "content": "\n".join(parts)}
 

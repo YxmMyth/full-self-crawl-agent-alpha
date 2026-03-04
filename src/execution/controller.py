@@ -84,11 +84,13 @@ class CrawlController:
                 nudges = self.governor.get_nudges(
                     self.history, self._collected_data, task.get("spec")
                 )
+                progress = self._compute_progress(task)
                 messages = self.context.build(
                     task=task,
                     history=self.history,
                     tools_schema=self.tools.schemas(),
                     nudges=nudges,
+                    progress=progress,
                 )
 
                 # 3. LLM decision
@@ -158,6 +160,7 @@ class CrawlController:
             "stop_reason": stop_reason,
             "summary": summary,
             "new_links": new_links,
+            "successful_tools": self._extract_successful_tools(),
             "metrics": {
                 **self.history.compile_results(),
                 **self.governor.get_stats(),
@@ -232,6 +235,50 @@ class CrawlController:
             pass
         return False
 
+    def _compute_progress(self, task: dict) -> dict:
+        """Compute progress stats for context injection."""
+        return {
+            "records_collected": len(self._collected_data),
+            "fields": self._summarize_fields(),
+            "steps_taken": self.history.count,
+            "steps_remaining": self.governor.max_steps - self.history.count,
+        }
+
+    def _summarize_fields(self) -> str | None:
+        """Summarize field coverage across collected records."""
+        if not self._collected_data:
+            return None
+        all_keys: set[str] = set()
+        for rec in self._collected_data:
+            if isinstance(rec, dict):
+                all_keys.update(rec.keys())
+        if not all_keys:
+            return None
+        total = len(self._collected_data)
+        parts = []
+        for key in sorted(all_keys):
+            filled = sum(1 for r in self._collected_data if isinstance(r, dict) and r.get(key))
+            pct = int(filled / total * 100) if total else 0
+            parts.append(f"{key}({pct}%)")
+        return ", ".join(parts)
+
+    def _extract_successful_tools(self) -> list[dict]:
+        """Extract successful tool calls for cross-page context.
+
+        Returns ALL successful steps — the agent on the next page decides
+        what's relevant, not us.
+        """
+        successful = []
+        for step in self.history.steps:
+            if step.succeeded:
+                args_str = json.dumps(step.tool_call.arguments, default=str)
+                if len(args_str) <= 500:
+                    successful.append({
+                        "tool": step.tool_name,
+                        "args": step.tool_call.arguments,
+                    })
+        return successful
+
     def _extract_css_data(self, result_content: str) -> None:
         """Extract records from extract_css result into collected data."""
         try:
@@ -245,9 +292,3 @@ class CrawlController:
             pass
 
     def _extract_saved_data(self, args: dict) -> None:
-        """Extract data from save_data tool arguments."""
-        data = args.get("data", [])
-        if isinstance(data, list):
-            self._collected_data.extend(data)
-        elif isinstance(data, dict):
-            self._collected_data.append(data)

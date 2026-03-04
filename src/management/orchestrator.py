@@ -12,6 +12,8 @@ import json
 import logging
 import os
 import re
+import shutil
+import tempfile
 import uuid
 from pathlib import Path
 from typing import Any
@@ -192,45 +194,99 @@ class Orchestrator:
             {"type": "object", "properties": {"full_page": {"type": "boolean", "description": "Capture full page (default false)"}}})
 
         registry.register("evaluate_js", browser.evaluate,
-            "Execute JavaScript in the page context and return result",
-            {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute"}}, "required": ["script"]})
+            'Execute JavaScript in the browser with live DOM access.\n'
+            'Use for: SPA/dynamic content, triggering JS events, extracting JS-rendered data.\n'
+            'Returns the result of the last expression.\n'
+            'Example: document.querySelectorAll(".item").length',
+            {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute in the browser"}}, "required": ["script"]})
 
         # --- Extraction tools (2) ---
         registry.register("extract_css", lambda **kwargs: extract_with_css(browser, **kwargs),
-            'Extract data using CSS selectors. Example: selectors={"title": "h1", "price": ".price"} extracts text from matching elements. Add container for repeating items (e.g., container=".product" to get a list).',
-            {"type": "object", "properties": {"selectors": {"type": "object", "description": 'JSON object mapping field names to CSS selectors. Example: {"title": "h3 a", "price": ".price_color"}'}, "container": {"type": "string", "description": "CSS selector for repeating container element. When set, returns a list of items."}}, "required": ["selectors"]})
+            'Quick CSS-based extraction for well-structured pages.\n'
+            'Returns: {"records": [...], "count": N}\n'
+            '\n'
+            'For repeating items (product lists, search results), set container:\n'
+            '  selectors={"title": "h3 a", "price": ".price_color"}, container=".product_pod"\n'
+            '\n'
+            'For single values (page title, total count), omit container:\n'
+            '  selectors={"page_title": "h1", "description": ".summary"}\n'
+            '\n'
+            'If the page structure is complex or nested, use execute_code with BeautifulSoup instead.',
+            {"type": "object", "properties": {"selectors": {"type": "object", "description": 'Map field names to CSS selectors. Example: {"title": "h3 a", "price": ".price_color"}'}, "container": {"type": "string", "description": "CSS selector for repeating container. Each match becomes one record."}}, "required": ["selectors"]})
 
         registry.register("intercept_api", lambda **kwargs: intercept_api(browser, **kwargs),
-            "Intercept API/XHR responses matching a URL pattern",
-            {"type": "object", "properties": {"url_pattern": {"type": "string", "description": "URL pattern to intercept"}, "action": {"type": "string", "description": "Action during intercept: scroll, wait, click:selector"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 10)"}}, "required": ["url_pattern"]})
+            'Intercept API/XHR responses matching a URL pattern.\n'
+            'Use when the page loads data via AJAX/fetch. Triggers an action (scroll, wait, or click)\n'
+            'then captures matching network responses.\n'
+            'Example: url_pattern="/api/products", action="scroll"',
+            {"type": "object", "properties": {"url_pattern": {"type": "string", "description": "URL substring to match against network requests"}, "action": {"type": "string", "description": "Action to trigger: scroll, wait, click:selector"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 10)"}}, "required": ["url_pattern"]})
 
         # --- Analysis tools (3) ---
         registry.register("analyze_page", lambda: analyze_page(browser),
-            "Analyze current page structure (type, SPA detection, containers)",
+            'Analyze current page structure: page type, SPA detection, data containers.\n'
+            'Use as a first step to understand what extraction approach to use.',
             {"type": "object", "properties": {}})
 
         registry.register("analyze_links", lambda **kwargs: analyze_links(browser, **{k: v for k, v in kwargs.items() if k in ('html', 'base_url')}),
-            "Extract and categorize all links on the current page",
+            'Extract and categorize all links on the current page.\n'
+            'Returns links grouped by type (navigation, pagination, detail, external).\n'
+            'Takes no parameters — operates on the current page.',
             {"type": "object", "properties": {}})
 
         registry.register("search_page", lambda **kwargs: search_page_tool(browser, **kwargs),
             "Search for text patterns on the current page",
             {"type": "object", "properties": {"query": {"type": "string", "description": "Text or regex pattern to search"}, "regex": {"type": "boolean", "description": "Use regex matching (default false)"}}, "required": ["query"]})
 
-        # --- Execution (1) ---
+        # --- Execution (1-2) ---
         is_docker = os.path.exists("/.dockerenv")
-        registry.register("execute_code", execute_code,
-            'Execute code in a subprocess and return stdout/stderr. The "code" param is a string of source code.',
-            {"type": "object", "properties": {"code": {"type": "string", "description": "Source code string to execute"}, "language": {"type": "string", "enum": ["python", "bash", "javascript"] if is_docker else ["python"], "description": "Programming language (default: python)"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}}, "required": ["code"]})
+        registry.register("execute_code", self._execute_code_with_context,
+            'Execute Python with access to the current page.\n'
+            '\n'
+            'Pre-loaded variables:\n'
+            '- page_html (str): cleaned HTML of the current page\n'
+            '- page_url (str): current page URL\n'
+            '\n'
+            'Available libraries: bs4, json, re, lxml, csv, collections\n'
+            '\n'
+            'WHEN TO USE: Complex HTML parsing, data transformation, regex extraction,\n'
+            'or when extract_css doesn\'t capture what you need. This is your most\n'
+            'powerful extraction tool — write Python the way a developer would.\n'
+            '\n'
+            'Print results to stdout as JSON.\n'
+            '\n'
+            'Example:\n'
+            '  from bs4 import BeautifulSoup\n'
+            '  import json\n'
+            '  soup = BeautifulSoup(page_html, "html.parser")\n'
+            '  items = [{"title": el.text.strip()} for el in soup.select(".product h3")]\n'
+            '  print(json.dumps(items))',
+            {"type": "object", "properties": {"code": {"type": "string", "description": "Python source code to execute. page_html and page_url are pre-loaded."}, "language": {"type": "string", "enum": ["python", "bash", "javascript"] if is_docker else ["python"], "description": "Programming language (default: python)"}, "timeout": {"type": "integer", "description": "Timeout in seconds (default 30)"}}, "required": ["code"]})
+
+        if is_docker:
+            registry.register("bash", self._bash_with_context,
+                'Run a bash command. Use for direct HTTP requests, JSON processing, text manipulation.\n'
+                '\n'
+                'Env vars auto-injected:\n'
+                '- $PAGE_HTML_FILE: path to current page HTML file\n'
+                '- $PAGE_URL: current page URL\n'
+                '\n'
+                'Examples:\n'
+                '  curl -s "https://api.site.com/data" | jq ".items[] | {name, price}"\n'
+                '  cat "$PAGE_HTML_FILE" | grep -oP \'href="([^"]+)"\' | sort -u\n'
+                '\n'
+                'Use when you discover API endpoints or need Unix text processing.',
+                {"type": "object", "properties": {"command": {"type": "string", "description": "Bash command(s) to execute"}}, "required": ["command"]})
 
         # --- Verification (1) ---
         registry.register("verify_quality", verify_quality_tool,
-            "Verify extracted data quality. Returns quality score and issues.",
+            'Check extracted data quality. Returns a score (0-1) and specific issues.\n'
+            'Pass the records you want to verify. Use to decide if extraction is good enough.',
             {"type": "object", "properties": {"data": {"type": "array", "items": {"type": "object"}, "description": "Extracted data records to verify"}}, "required": ["data"]})
 
         # --- Storage (2) ---
         registry.register("save_data", self._save_data_tool,
-            "Save extracted data records",
+            'Save extracted data records to file. Call this when you have data to persist.\n'
+            'Returns: {"saved": N, "path": "...", "format": "json"}',
             {"type": "object", "properties": {"data": {"type": "array", "items": {"type": "object"}, "description": "Data records to save"}, "format": {"type": "string", "enum": ["json", "csv"], "description": "Output format (default json)"}}, "required": ["data"]})
 
         registry.register("download_file", self._download_file_tool,
@@ -272,7 +328,7 @@ class Orchestrator:
         # --- Phase 1: Exploration ---
         logger.info(f"Phase 1: Exploring {url}")
         explore_governor = Governor(
-            max_steps=15, max_llm_calls=10, max_time_seconds=120,
+            max_steps=50, max_llm_calls=30, max_time_seconds=300,
             monitor=RiskMonitor(),
         )
         explore_context = ContextManager(max_history_steps=3)
@@ -310,6 +366,7 @@ class Orchestrator:
 
         site_context = explore_result.get("summary", "")
         pages_extracted = 0
+        prior_experience = None  # Accumulated cross-page context
 
         while True:
             task_item = frontier.next()
@@ -330,6 +387,7 @@ class Orchestrator:
                 "spec": spec,
                 "role": "extraction",
                 "site_context": site_context,
+                "prior_experience": prior_experience,
             }
 
             extract_controller = CrawlController(
@@ -346,6 +404,15 @@ class Orchestrator:
 
             self._state_mgr.record_page_visit(task_id, task_item.url)
             self._state_mgr.add_data(task_id, page_data)
+
+            # Build cross-page experience: raw facts, agent decides what's useful
+            successful_tools = result.get("successful_tools", [])
+            prior_experience = (
+                f"Previous page ({task_item.url}): "
+                f"{len(page_data)} records extracted, {len(all_data)} total so far.\n"
+                f"Successful tool calls: {json.dumps(successful_tools[-5:], default=str, ensure_ascii=False)}\n"
+                f"Sample record: {json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
+            )
 
             # Check completion gate
             gate = CompletionGate()
@@ -395,6 +462,52 @@ class Orchestrator:
         )
 
         return await controller.run(task)
+
+    async def _execute_code_with_context(self, code: str, language: str = "python", timeout: int = 30) -> dict:
+        """Execute code with current browser state injected."""
+        from ..tools.code_runner import execute_code
+
+        ctx_dir = tempfile.mkdtemp(prefix="crawl_ctx_")
+        try:
+            # Write browser state to temp files
+            try:
+                html = await self._get_clean_html()
+            except Exception:
+                html = ""
+            Path(os.path.join(ctx_dir, "page.html")).write_text(html, encoding="utf-8")
+
+            url = ""
+            if self._browser:
+                try:
+                    url = await self._browser.current_url() if callable(getattr(self._browser, 'current_url', None)) else (self._browser.current_url or "")
+                except Exception:
+                    url = ""
+            Path(os.path.join(ctx_dir, "page_url.txt")).write_text(url, encoding="utf-8")
+
+            if language == "python":
+                preamble = (
+                    f'import os as _os\n'
+                    f'_ctx = r"{ctx_dir}"\n'
+                    f'with open(_os.path.join(_ctx, "page.html"), "r", encoding="utf-8") as _f:\n'
+                    f'    page_html = _f.read()\n'
+                    f'with open(_os.path.join(_ctx, "page_url.txt"), "r") as _f:\n'
+                    f'    page_url = _f.read().strip()\n'
+                )
+                code = preamble + "\n" + code
+            elif language == "bash":
+                preamble = (
+                    f'export PAGE_HTML_FILE="{ctx_dir}/page.html"\n'
+                    f'export PAGE_URL="$(cat "{ctx_dir}/page_url.txt")"\n'
+                )
+                code = preamble + code
+
+            return await execute_code(code, language, timeout)
+        finally:
+            shutil.rmtree(ctx_dir, ignore_errors=True)
+
+    async def _bash_with_context(self, command: str, timeout: int = 30) -> dict:
+        """Run bash command with browser state in env vars."""
+        return await self._execute_code_with_context(command, language="bash", timeout=timeout)
 
     async def _get_clean_html(self, selector: str | None = None) -> str:
         """Get page HTML with noise removed (scripts, styles, comments)."""
