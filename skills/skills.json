@@ -1,0 +1,12 @@
+[
+  {
+    "id": "codepen-codemirror5",
+    "name": "Extract CodeMirror 5 code editors (CodePen)",
+    "url_pattern": "codepen.io/*/pen/*",
+    "description": "Extracts HTML, CSS, JS from CodePen pen editor pages. Editors are in DOM order: index 0=HTML, 1=CSS, 2=JS. IMPORTANT: First verify editors are loaded: evaluate_js('() => document.querySelectorAll(\".CodeMirror\").length') — should return 3. If 0, editors are not ready yet; call navigate again with wait_until='networkidle'. If result strings are empty after extraction, try the DOM line fallback instead.",
+    "tool": "evaluate_js",
+    "code": "() => { const cms = [...document.querySelectorAll('.CodeMirror')]; const extract = (el) => { const v = el?.CodeMirror?.getValue(); if (v) return v; return [...(el?.querySelectorAll('.CodeMirror-line') || [])].map(l => l.innerText).join('\\n'); }; return { editor_count: cms.length, editor_0: extract(cms[0]) || '', editor_1: extract(cms[1]) || '', editor_2: extract(cms[2]) || '' }; }",
+    "verified_count": 2,
+    "tags": ["code-editor", "codepen", "codemirror"]
+  }
+]

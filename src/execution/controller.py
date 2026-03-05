@@ -151,6 +151,15 @@ class CrawlController:
 
                     result = await self._execute_tool(tc)
 
+                    # Track current URL after navigate so skill library can inject on next step
+                    if tc.name == "navigate" and result.success:
+                        try:
+                            nav_data = json.loads(result.content)
+                            if isinstance(nav_data, dict) and nav_data.get("url"):
+                                task["current_url"] = nav_data["url"]
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
                     self.history.record(self._step_number, tc, result)
 
                     # Track for loop detection

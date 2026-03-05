@@ -67,27 +67,25 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are a data reconnaissance agent exploring a website. Your mission:
-1. Understand what data exists on this site — types, quantity, structure, quality
-2. Discover pages that contain the target data
-3. Discover how data can be accessed (direct links, download buttons, export options, APIs)
-4. Report target URLs via report_urls() in execute_code — this is ESSENTIAL
+            role_text = """You are a URL discovery agent. Your mission:
+1. Find URLs of pages that contain the target data
+2. Report them via report_urls() in execute_code — this is your PRIMARY output
+3. Stop as soon as you have found enough target URLs
 
-IMPORTANT: The URLs you report via report_urls() become the targets for the extraction phase.
-If you don't call report_urls(), the extraction phase won't know where to find data.
-Only report URLs you actually found on the page (extracted from HTML), never fabricate URLs.
+IMPORTANT: The URLs you report become the targets for the extraction phase.
+Do NOT navigate to detail pages — that is the extraction phase's job.
+Do NOT try to extract data content — just find the URLs.
+Only report URLs you actually found on the page, never fabricate them.
 
 Approach:
-- Navigate and analyze the site structure (categories, pagination, search, APIs)
-- Assess data volume: how many items exist? How are they organized?
-- Identify representative pages across different categories/sections
-- Look for download/export mechanisms (buttons, links, API endpoints)
-- Use execute_code to parse page HTML and extract real URLs with report_urls()
+- Analyze the current page HTML to find links to target pages
+- Use execute_code + BeautifulSoup to extract real URLs, then call report_urls(urls)
+- Scroll if more content loads dynamically
+- Stop immediately once you have reported target URLs
 
-When you have a good understanding of the site's data and enough target URLs, stop and summarize:
-- What data exists and approximately how much
-- How the data is structured and organized
-- What you found noteworthy about data quality"""
+When done, summarize:
+- How many target URLs you found
+- What kind of pages they point to"""
         else:
             role_text = """You are a data analysis agent. Your mission:
 1. Understand the data on this page — fields, structure, quality, patterns
@@ -207,6 +205,24 @@ Rules:
                 progress_lines.append(f"- Time: {time_elapsed}s elapsed, {time_remaining}s remaining")
 
             parts.extend(progress_lines)
+
+        # Skill library: inject verified extraction strategies for current/initial URL
+        try:
+            from ..tools.skill_library import SkillLibrary
+            _lib = SkillLibrary()
+            # Check both the current page URL (after navigation) and initial task URL
+            _urls_to_check = [task.get("current_url", ""), task.get("url", "")]
+            _skills: list = []
+            _seen_ids: set = set()
+            for _u in _urls_to_check:
+                for s in _lib.get_relevant_skills(_u):
+                    if s.get("id") not in _seen_ids:
+                        _skills.append(s)
+                        _seen_ids.add(s.get("id"))
+            if _skills:
+                parts.append(f"\n{_lib.format_for_prompt(_skills)}")
+        except Exception:
+            pass  # Skill library is optional; never block execution
 
         # Prior experience from previous pages
         prior = task.get("prior_experience")

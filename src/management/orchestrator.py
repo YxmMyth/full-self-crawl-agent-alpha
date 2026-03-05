@@ -224,17 +224,19 @@ class Orchestrator:
             {"type": "object", "properties": {}})
         registry.register("evaluate_js", browser.evaluate,
             'Execute JavaScript in the browser with live DOM access.\n'
-            'Use for: SPA/dynamic content, triggering JS events, extracting JS-rendered data.\n'
-            'Returns the result of the last expression.\n'
-            'Example: document.querySelectorAll(".item").length',
-            {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute in the browser"}}, "required": ["script"]})
-
-        registry.register("get_code_editors", browser.get_code_editors,
-            'Extract source code from all code editors on the current page.\n'
-            'Works with CodeMirror 5 (CodePen), CodeMirror 6, and Monaco editors.\n'
-            'Returns dict: {"editor_0": "...", "editor_1": "...", ...}\n'
-            'For CodePen pens: editor_0=HTML, editor_1=CSS, editor_2=JS.',
-            {"type": "object", "properties": {}})
+            'REQUIRED: script must be an arrow function or expression — NOT a bare "return" statement.\n'
+            '\n'
+            'Correct syntax:\n'
+            '  "() => document.title"                              — expression\n'
+            '  "() => document.querySelectorAll(\'.item\').length"  — DOM query\n'
+            '  "() => { const x = 1; return x + 2; }"            — block with return\n'
+            '\n'
+            'Wrong syntax (will error):\n'
+            '  "return document.title"  — bare return not allowed\n'
+            '\n'
+            'Use for: SPA/dynamic content, JS object state (e.g. CodeMirror editors), triggering events.\n'
+            'Returns the value of the expression/return statement.',
+            {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript arrow function or expression. Must NOT be a bare 'return' statement."}}, "required": ["script"]})
 
         # --- Extraction tools (2) ---
         registry.register("extract_css", lambda **kwargs: extract_with_css(browser, **kwargs),
