@@ -7,8 +7,13 @@ The agent container connects via:
 Camoufox uses a custom Firefox build with C++-level fingerprint injection,
 making automation undetectable to Cloudflare and other anti-bot systems.
 """
+import base64
 import os
-from camoufox.server import launch_server
+import subprocess
+from pathlib import Path
+
+import orjson
+from camoufox.server import LAUNCH_SCRIPT, get_nodejs, launch_options, to_camel_case_dict
 
 proxy_url = os.environ.get("PROXY_URL", "")
 proxy = {"server": proxy_url} if proxy_url else None
@@ -22,12 +27,31 @@ if proxy:
 else:
     print("No proxy configured (direct connection)")
 
-launch_server(
-    headless="virtual",   # Xvfb virtual display — not flagged as headless
-    geoip=bool(proxy),    # match timezone/locale to proxy IP when proxy is set
-    proxy=proxy,
+kwargs = dict(
+    headless=True,        # True = pure headless mode in Docker
     disable_coop=True,    # allow clicking CF Turnstile checkbox in cross-origin iframes
+    i_know_what_im_doing=True,  # suppress LeakWarning for disable_coop
     humanize=True,        # human-like mouse movement
     port=port,
     ws_path=ws_path,
 )
+if proxy:
+    kwargs["proxy"] = proxy
+
+config = launch_options(**kwargs)
+# Filter out None values — camoufox always includes proxy:None which Firefox rejects
+config = {k: v for k, v in config.items() if v is not None}
+
+nodejs = get_nodejs()
+data = orjson.dumps(to_camel_case_dict(config))
+process = subprocess.Popen(  # nosec
+    [nodejs, str(LAUNCH_SCRIPT)],
+    cwd=Path(nodejs).parent / "package",
+    stdin=subprocess.PIPE,
+    text=True,
+)
+if process.stdin:
+    process.stdin.write(base64.b64encode(data).decode())
+    process.stdin.close()
+process.wait()
+raise RuntimeError("Camoufox server process terminated unexpectedly")
