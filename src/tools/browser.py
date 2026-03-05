@@ -106,7 +106,13 @@ class BrowserTool:
             ws_url = os.environ.get("BROWSER_WS_URL", "")
             if ws_url:
                 self.browser = await self.playwright.firefox.connect(ws_url)
-                self.context = await self.browser.new_context()
+                storage_state = None
+                state_path = os.environ.get("BROWSER_STORAGE_STATE", "")
+                if state_path and os.path.exists(state_path):
+                    storage_state = state_path
+                    self._storage_state_path = state_path
+                    logger.info(f"Loading browser auth state from {state_path}")
+                self.context = await self.browser.new_context(storage_state=storage_state)
                 self.page = await self.context.new_page()
                 logger.info(f"Connected to Camoufox at {ws_url}")
                 return

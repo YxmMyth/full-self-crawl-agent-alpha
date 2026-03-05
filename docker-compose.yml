@@ -27,6 +27,7 @@ services:
       - BROWSER_HEADLESS=true
       - DOCKER_CONTAINER=1
       - BROWSER_WS_URL=ws://camoufox:1234/ws
+      - BROWSER_STORAGE_STATE=/app/states/auth_state.json
     depends_on:
       - camoufox
     working_dir: /app
@@ -43,10 +44,12 @@ services:
       - BROWSER_HEADLESS=true
       - DOCKER_CONTAINER=1
       - BROWSER_WS_URL=ws://camoufox:1234/ws
+      - BROWSER_STORAGE_STATE=/workspace/states/auth_state.json
     depends_on:
       - camoufox
     volumes:
       - agent-output:/workspace
+      - ./states:/workspace/states:ro
 
   # One-shot test runner
   test:
