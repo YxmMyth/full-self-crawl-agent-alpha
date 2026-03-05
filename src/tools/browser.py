@@ -21,6 +21,7 @@ import asyncio
 import functools
 import random
 import logging
+import re
 import subprocess
 import shutil
 from fnmatch import fnmatch
@@ -385,7 +386,53 @@ class BrowserTool:
 
     async def evaluate(self, script: str) -> Any:
         """Execute JavaScript in page context."""
-        return await self.page.evaluate(script)
+        s = script.strip()
+        # Auto-wrap bare "return ..." — Playwright requires an arrow/function expression
+        if re.match(r'^return\b', s):
+            s = f"() => {{ {s} }}"
+        return await self.page.evaluate(s)
+
+    async def get_code_editors(self) -> Dict[str, str]:
+        """Extract source code from all code editors on the page.
+
+        Works with CodeMirror 5 (CodePen), CodeMirror 6, and Monaco editors.
+        Returns a dict with keys 'editor_0', 'editor_1', ... containing the full code text.
+        For CodePen, editors are ordered: HTML, CSS, JS.
+        """
+        return await self.page.evaluate("""() => {
+            const result = {};
+            // CodeMirror 5 (CodePen)
+            const cm5 = document.querySelectorAll('.CodeMirror');
+            if (cm5.length > 0) {
+                cm5.forEach((el, i) => {
+                    if (el.CodeMirror) {
+                        result['editor_' + i] = el.CodeMirror.getValue();
+                    } else {
+                        const lines = el.querySelectorAll('.CodeMirror-line');
+                        result['editor_' + i] = [...lines].map(l => l.innerText).join('\\n');
+                    }
+                });
+                return result;
+            }
+            // CodeMirror 6
+            const cm6 = document.querySelectorAll('.cm-editor');
+            if (cm6.length > 0) {
+                cm6.forEach((el, i) => {
+                    const content = el.querySelector('.cm-content');
+                    result['editor_' + i] = content ? content.innerText : '';
+                });
+                return result;
+            }
+            // Monaco
+            const monaco = window.monaco;
+            if (monaco) {
+                monaco.editor.getModels().forEach((m, i) => {
+                    result['editor_' + i] = m.getValue();
+                });
+                return result;
+            }
+            return result;
+        }""")
 
     # --- Smart scrolling ---
 

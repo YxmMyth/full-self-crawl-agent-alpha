@@ -26,9 +26,22 @@ async def main():
             print("[diag] Launching local Chromium")
             browser = await p.chromium.launch(headless=True)
 
+        # Load saved auth cookies if available
+        storage_state = None
+        state_path = os.environ.get("BROWSER_STORAGE_STATE", "")
+        if not state_path:
+            # Also check the default local path when running outside docker
+            local_default = "states/auth_state.json"
+            if os.path.exists(local_default):
+                state_path = local_default
+        if state_path and os.path.exists(state_path):
+            storage_state = state_path
+            print(f"[diag] Loading auth state from {state_path}")
+
         context = await browser.new_context(
             viewport={"width": 1280, "height": 900},
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:135.0) Gecko/20100101 Firefox/135.0",
+            storage_state=storage_state,
         )
         page = await context.new_page()
 

@@ -229,6 +229,13 @@ class Orchestrator:
             'Example: document.querySelectorAll(".item").length',
             {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript code to execute in the browser"}}, "required": ["script"]})
 
+        registry.register("get_code_editors", browser.get_code_editors,
+            'Extract source code from all code editors on the current page.\n'
+            'Works with CodeMirror 5 (CodePen), CodeMirror 6, and Monaco editors.\n'
+            'Returns dict: {"editor_0": "...", "editor_1": "...", ...}\n'
+            'For CodePen pens: editor_0=HTML, editor_1=CSS, editor_2=JS.',
+            {"type": "object", "properties": {}})
+
         # --- Extraction tools (2) ---
         registry.register("extract_css", lambda **kwargs: extract_with_css(browser, **kwargs),
             'Quick CSS-based extraction for well-structured pages.\n'
