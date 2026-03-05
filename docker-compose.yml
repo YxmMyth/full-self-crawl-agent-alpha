@@ -1,4 +1,18 @@
 services:
+  # Camoufox sidecar: custom Firefox + Xvfb + C++-level fingerprint injection
+  # Exposes a Playwright-compatible WebSocket endpoint on port 1234
+  # Set PROXY_URL=http://user:pass@host:port for residential proxy (recommended for production)
+  camoufox:
+    build:
+      context: ./services/camoufox
+    environment:
+      - PROXY_URL=${PROXY_URL:-}
+      - CAMOUFOX_PORT=1234
+      - CAMOUFOX_WS_PATH=ws
+    expose:
+      - "1234"
+    restart: unless-stopped
+
   # Development: mount source, interactive shell
   dev:
     build:
@@ -12,6 +26,9 @@ services:
     environment:
       - BROWSER_HEADLESS=true
       - DOCKER_CONTAINER=1
+      - BROWSER_WS_URL=ws://camoufox:1234/ws
+    depends_on:
+      - camoufox
     working_dir: /app
     stdin_open: true
     tty: true
@@ -25,6 +42,9 @@ services:
     environment:
       - BROWSER_HEADLESS=true
       - DOCKER_CONTAINER=1
+      - BROWSER_WS_URL=ws://camoufox:1234/ws
+    depends_on:
+      - camoufox
     volumes:
       - agent-output:/workspace
 
@@ -37,6 +57,10 @@ services:
       - .:/app
       - /app/__pycache__
     env_file: .env
+    environment:
+      - BROWSER_WS_URL=ws://camoufox:1234/ws
+    depends_on:
+      - camoufox
     command: ["python", "-m", "pytest", "tests/", "-v", "--tb=short"]
 
 volumes:

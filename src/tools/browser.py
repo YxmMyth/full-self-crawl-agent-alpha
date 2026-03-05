@@ -97,12 +97,21 @@ class BrowserTool:
                 logger.warning(message)
 
     async def start(self) -> None:
-        """Launch browser (local or connect to remote via CDP)."""
+        """Launch browser (local Chromium, Camoufox WS, or remote CDP)."""
         import os
         try:
             self.playwright = await async_playwright().start()
 
-            # Remote browser via CDP (bypasses CF by using a real browser)
+            # Mode 1: Camoufox WS endpoint (best CF bypass — Firefox + C++ fingerprint injection)
+            ws_url = os.environ.get("BROWSER_WS_URL", "")
+            if ws_url:
+                self.browser = await self.playwright.firefox.connect(ws_url)
+                self.context = await self.browser.new_context()
+                self.page = await self.context.new_page()
+                logger.info(f"Connected to Camoufox at {ws_url}")
+                return
+
+            # Mode 2: Remote browser via CDP (bypasses CF by using a real browser)
             cdp_url = os.environ.get("BROWSER_CDP_URL", "")
             if cdp_url:
                 # Chrome rejects non-IP Host headers; resolve ws:// URL ourselves
