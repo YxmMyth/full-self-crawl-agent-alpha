@@ -224,36 +224,90 @@ async def analyze_links(
             "category": category,
         })
 
-    by_category = {}
+    by_category: dict[str, int] = {}
     for link in links:
         cat = link["category"]
         by_category[cat] = by_category.get(cat, 0) + 1
 
+    # Smart truncation: when many links, prioritise detail > list > other, drop nav
+    # This keeps LLM context clean and signal-to-noise high
+    MAX_LINKS = 40
+    if len(links) > MAX_LINKS:
+        priority_order = ["detail", "list", "other"]
+        truncated: list[dict] = []
+        for cat in priority_order:
+            for lnk in links:
+                if lnk["category"] == cat and len(truncated) < MAX_LINKS:
+                    truncated.append(lnk)
+        omitted = len(links) - len(truncated)
+        nav_count = by_category.get("nav", 0)
+        return {
+            "links": truncated,
+            "total": len(links),
+            "shown": len(truncated),
+            "omitted": omitted,
+            "by_category": by_category,
+            "note": (
+                f"Showing {len(truncated)} of {len(links)} links (detail-first). "
+                f"{nav_count} nav/utility links excluded. "
+                "Focus on 'detail' category links for extraction targets."
+            ),
+        }
+
     return {
         "links": links,
         "total": len(links),
+        "shown": len(links),
         "by_category": by_category,
     }
 
 
 def _categorize_link(url: str, text: str) -> str:
-    """Rule-based link categorization."""
-    path = urlparse(url).path.lower()
+    """Rule-based link categorization.
 
-    # Detail page patterns
+    Returns: "detail" | "list" | "nav" | "other"
+    """
+    path = urlparse(url).path.lower()
+    path_segments = [s for s in path.split("/") if s]
+
+    # Nav/utility paths — exclude from exploration targets (generic across all sites)
+    _NAV_SEGMENTS = {
+        "login", "signin", "signup", "register", "logout",
+        "about", "contact", "help", "faq", "support", "docs", "documentation",
+        "pricing", "terms", "privacy", "policy", "legal",
+        "blog", "news", "press", "careers", "jobs",
+        "trending", "explore", "discover", "popular", "featured",
+        "settings", "account", "profile", "dashboard",
+        "search", "results",
+    }
+    if path_segments and path_segments[-1] in _NAV_SEGMENTS:
+        return "nav"
+    if len(path_segments) == 1 and path_segments[0] in _NAV_SEGMENTS:
+        return "nav"
+
+    # Detail page patterns (content item pages)
     detail_patterns = [
-        r"/\d{4,}",     # Numeric ID in path
+        r"/\d{4,}",                  # Numeric ID
         r"/article/", r"/post/", r"/detail/", r"/item/",
-        r"/product/", r"/news/", r"/blog/",
+        r"/product/", r"/news/",
+        r"/pen/", r"/repo/", r"/project/", r"/snippet/", r"/gist/",
+        r"/watch/", r"/video/", r"/track/", r"/episode/",
+        r"/question/", r"/answer/",
+        r"/story/", r"/entry/",
     ]
     for p in detail_patterns:
         if re.search(p, path):
             return "detail"
 
+    # 3-segment paths typically mean user/type/id — detail pages on content platforms
+    if len(path_segments) >= 3:
+        return "detail"
+
     # List/index patterns
     list_patterns = [
         r"/page/\d+", r"\?page=", r"/category/", r"/tag/",
-        r"/list", r"/archive", r"/index",
+        r"/list", r"/archive", r"/index", r"/collection/",
+        r"/search/",
     ]
     for p in list_patterns:
         if re.search(p, path) or re.search(p, url):

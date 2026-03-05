@@ -198,18 +198,6 @@ class CrawlController:
                     if tc.name == "save_data" and result.success:
                         self._extract_saved_data(tc.arguments)
 
-                    # Collect links from analyze_links
-                    if tc.name == "analyze_links" and result.success:
-                        try:
-                            link_data = json.loads(result.content)
-                            if isinstance(link_data, dict):
-                                for link in link_data.get("links", []):
-                                    url = link.get("url", "") if isinstance(link, dict) else str(link)
-                                    if url:
-                                        new_links.append(url)
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-
         except Exception as e:
             stop_reason = f"Exception: {str(e)}"
             logger.error(f"Controller error: {traceback.format_exc()}")

@@ -635,9 +635,21 @@ class Orchestrator:
             elem_count = result.get("element_count", 0)
             # SPA shell detection: many elements but little text
             if elem_count > 50 and text_len < 200:
+                # Wait briefly for SPA to finish rendering before agent acts on hint
+                import asyncio
+                await asyncio.sleep(2)
+                # Re-measure after wait
+                try:
+                    text_len = await self._browser.page.evaluate(
+                        "document.body ? document.body.innerText.length : 0"
+                    )
+                    result["text_content_length"] = text_len
+                except Exception:
+                    pass
                 result["hint"] = (result.get("hint", "") +
-                    " Page has many elements but very little text content — "
-                    "likely an SPA that didn't render client-side content.").strip()
+                    " SPA detected (content still loading): do NOT navigate away. "
+                    "Call analyze_links() to get all rendered links from the live DOM — "
+                    "it reads the current rendered state, not the original server HTML.").strip()
         except Exception:
             result["text_content_length"] = -1
         return result
@@ -706,31 +718,56 @@ class Orchestrator:
                     f'    print(f"Saved {{len(_recs)}} records{{_anchor_info}}")\n'
                     f'\n'
                     f'def report_urls(urls):\n'
-                    f'    """Report discovered target URLs for extraction. URLs are validated against page content."""\n'
+                    f'    """Report discovered target URLs for extraction. URLs are validated by structure."""\n'
+                    f'    import re as _re\n'
                     f'    from urllib.parse import urlparse as _urlparse\n'
                     f'    _urls = urls if isinstance(urls, list) else [urls]\n'
-                    f'    if len(page_html.strip()) < 500:\n'
-                    f'        print(f"⚠️ Warning: page content is very small ({{len(page_html)}} chars). Page may be blocked or empty. URLs may be unreliable.")\n'
+                    f'    # Common utility/nav paths — never content detail pages\n'
+                    f'    _NAV = {{"login","signin","signup","register","logout","about","contact","help",\n'
+                    f'            "faq","support","docs","documentation","pricing","terms","privacy",\n'
+                    f'            "policy","legal","blog","news","press","careers","jobs","trending",\n'
+                    f'            "explore","discover","popular","featured","settings","account",\n'
+                    f'            "dashboard","search","results","notifications"}}\n'
                     f'    _accepted = []\n'
                     f'    _rejected = []\n'
                     f'    for _u in _urls:\n'
                     f'        _u = _u.strip()\n'
                     f'        if not _u:\n'
                     f'            continue\n'
-                    f'        _path = _urlparse(_u).path.rstrip("/")\n'
-                    f'        _segments = [s for s in _path.split("/") if len(s) > 3]\n'
-                    f'        if not _segments:\n'
-                    f'            _accepted.append(_u)\n'
-                    f'        elif any(seg in page_html for seg in _segments):\n'
-                    f'            _accepted.append(_u)\n'
-                    f'        else:\n'
-                    f'            _rejected.append(_u)\n'
+                    f'        _parsed = _urlparse(_u)\n'
+                    f'        _path = _parsed.path.rstrip("/")\n'
+                    f'        _segs = [s for s in _path.split("/") if s]\n'
+                    f'        _depth = len(_segs)\n'
+                    f'        # Reject: root URLs (homepage)\n'
+                    f'        if _depth == 0:\n'
+                    f'            _rejected.append(_u); continue\n'
+                    f'        # Reject: known nav/utility single-segment paths\n'
+                    f'        if _depth == 1 and _segs[0].lower() in _NAV:\n'
+                    f'            _rejected.append(_u); continue\n'
+                    f'        # Reject: paths ending in common nav keywords\n'
+                    f'        if _segs[-1].lower() in _NAV:\n'
+                    f'            _rejected.append(_u); continue\n'
+                    f'        # Reject: query-only or fragment-only URLs with no useful path\n'
+                    f'        if _depth <= 1 and not _parsed.query and _segs and _segs[0].lower() in _NAV:\n'
+                    f'            _rejected.append(_u); continue\n'
+                    f'        # Accept: 3+ segment paths (user/type/id pattern — detail pages on content platforms)\n'
+                    f'        if _depth >= 3:\n'
+                    f'            _accepted.append(_u); continue\n'
+                    f'        # Accept: known detail-page path keywords\n'
+                    f'        _DETAIL = {{"pen","post","article","item","product","repo","project",\n'
+                    f'                   "snippet","gist","video","watch","story","entry","question"}}\n'
+                    f'        if any(s.lower() in _DETAIL for s in _segs):\n'
+                    f'            _accepted.append(_u); continue\n'
+                    f'        # Accept: paths with numeric ID segments\n'
+                    f'        if any(_re.match(r"\\d{{4,}}", s) for s in _segs):\n'
+                    f'            _accepted.append(_u); continue\n'
+                    f'        _rejected.append(_u)\n'
                     f'    with open(_os.path.join(_ctx, "urls.txt"), "a", encoding="utf-8") as _uf:\n'
                     f'        for _u in _accepted:\n'
                     f'            _uf.write(_u + "\\n")\n'
                     f'    if _rejected:\n'
-                    f'        print(f"⚠️ Rejected {{len(_rejected)}} URLs not found in page content (possible hallucination): {{_rejected[:3]}}")\n'
-                    f'    print(f"Reported {{len(_accepted)}} verified URLs ({{len(_rejected)}} rejected)")\n'
+                    f'        print(f"⚠️ Rejected {{len(_rejected)}} non-detail URLs: {{_rejected[:3]}}")\n'
+                    f'    print(f"Reported {{len(_accepted)}} target URLs ({{len(_rejected)}} rejected)")\n'
                     f'\n'
                     f'def save_file(url, description=""):\n'
                     f'    """Download and save a file (PDF, image, dataset, etc.) as an artifact.\n'

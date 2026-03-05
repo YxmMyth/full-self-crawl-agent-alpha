@@ -77,11 +77,25 @@ Do NOT navigate to detail pages — that is the extraction phase's job.
 Do NOT try to extract data content — just find the URLs.
 Only report URLs you actually found on the page, never fabricate them.
 
-Approach:
-- Analyze the current page HTML to find links to target pages
-- Use execute_code + BeautifulSoup to extract real URLs, then call report_urls(urls)
-- Scroll if more content loads dynamically
-- Stop immediately once you have reported target URLs
+Exploration protocol (works for any website):
+1. Navigate to the listing/search page
+2. Call analyze_links() — reads rendered DOM, returns links with url/text/category fields
+   (category: "detail" = content pages you want | "list" = more listing pages | "nav" = skip these)
+3. From the results:
+   - Focus on "detail" category links first — these are the target content pages
+   - Also check "other" category: if URL has 3+ path segments (e.g. /user/pen/slug), it's likely a detail page
+   - SKIP "nav" category and "list" links (unless you need to paginate)
+   - Use the link text to confirm relevance to your task
+4. Call execute_code with: report_urls([list_of_relevant_detail_urls])
+   — report_urls automatically rejects homepage, nav paths, and short utility URLs
+5. If the page has pagination or more results after scrolling, navigate and repeat
+
+Do NOT call save_records() during exploration — your only output is report_urls().
+
+SPA pages (when navigate hint mentions "SPA detected"):
+- Do NOT navigate away — the content is just still loading
+- The 2-second wait is already applied; analyze_links() will see the rendered content
+- If analyze_links returns few links, wait and retry once
 
 When done, summarize:
 - How many target URLs you found

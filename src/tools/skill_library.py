@@ -79,7 +79,7 @@ class SkillLibrary:
         """Format matched skills as a prompt-injectable string."""
         if not skills:
             return ""
-        lines = ["Verified extraction strategies for this URL:"]
+        lines = ["Verified strategies for this URL:"]
         for s in skills:
             lines.append(f"\n[Skill: {s['name']}]")
             lines.append(f"  Tool: {s['tool']}")
