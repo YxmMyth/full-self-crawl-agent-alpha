@@ -184,6 +184,25 @@ class ArtifactManager:
             except Exception as e:
                 info["csv_error"] = str(e)
 
+        elif ext == ".zip":
+            import zipfile
+            try:
+                with zipfile.ZipFile(str(path), "r") as zf:
+                    names = zf.namelist()
+                    info["file_list"] = names
+                    info["file_count"] = len(names)
+                    files: dict[str, str] = {}
+                    for name in names:
+                        if any(name.endswith(s) for s in (".html", ".css", ".js", ".json", ".txt", ".md")):
+                            try:
+                                content = zf.read(name).decode("utf-8", errors="replace")
+                                files[name] = content
+                            except Exception as read_err:
+                                files[name] = f"[read error: {read_err}]"
+                    info["files"] = files
+            except Exception as e:
+                info["zip_error"] = str(e)
+
         elif ext in (".json", ".jsonl"):
             try:
                 with open(path, "r", encoding="utf-8") as f:

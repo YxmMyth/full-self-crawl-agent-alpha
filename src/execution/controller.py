@@ -181,6 +181,10 @@ class CrawlController:
                     if tc.name in ("execute_code", "bash") and result.success:
                         self._collect_side_channel(result, new_links)
 
+                    # Collect records from js_extract_save side-channel (_records field)
+                    if tc.name == "js_extract_save" and result.success:
+                        self._collect_side_channel(result, new_links)
+
                     # Track files from download_file or click_download tool
                     if tc.name in ("download_file", "click_download") and result.success:
                         try:

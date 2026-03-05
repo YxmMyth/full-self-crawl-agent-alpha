@@ -24,6 +24,9 @@ numpy>=1.24.0
 openpyxl>=3.1.0
 pypdf>=4.0.0
 
+# Database (optional — graceful degradation when DATABASE_URL not set)
+asyncpg>=0.29.0
+
 # Network
 chardet>=5.0.0
 fake-useragent>=1.4.0

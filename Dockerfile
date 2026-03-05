@@ -46,6 +46,7 @@ FROM base AS production
 
 COPY src/ /app/src/
 COPY config/ /app/config/
+COPY skills/ /app/skills/
 COPY pyproject.toml /app/
 
 RUN useradd -m -s /bin/bash crawler \

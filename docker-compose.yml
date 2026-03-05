@@ -1,4 +1,23 @@
 services:
+  # PostgreSQL: persistent history across all agent runs
+  # Multiple agents can write concurrently; orchestrator reads for display
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: agent_history
+      POSTGRES_USER: agent
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-agentpass}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U agent -d agent_history"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
   # Camoufox sidecar: custom Firefox + Xvfb + C++-level fingerprint injection
   # Exposes a Playwright-compatible WebSocket endpoint on port 1234
   # Set PROXY_URL=http://user:pass@host:port for residential proxy (recommended for production)
@@ -22,14 +41,17 @@ services:
       - .:/app
       - /app/__pycache__
       - playwright-cache:/home/crawler/.cache
+      - ./artifacts:/workspace/artifacts
     env_file: .env
     environment:
       - BROWSER_HEADLESS=true
       - DOCKER_CONTAINER=1
       - BROWSER_WS_URL=ws://camoufox:1234/ws
       - BROWSER_STORAGE_STATE=/app/states/auth_state.json
+      - DATABASE_URL=postgresql://agent:${POSTGRES_PASSWORD:-agentpass}@db:5432/agent_history
     depends_on:
       - camoufox
+      - db
     working_dir: /app
     stdin_open: true
     tty: true
@@ -45,8 +67,12 @@ services:
       - DOCKER_CONTAINER=1
       - BROWSER_WS_URL=ws://camoufox:1234/ws
       - BROWSER_STORAGE_STATE=/workspace/states/auth_state.json
+      - DATABASE_URL=postgresql://agent:${POSTGRES_PASSWORD:-agentpass}@db:5432/agent_history
     depends_on:
-      - camoufox
+      camoufox:
+        condition: service_started
+      db:
+        condition: service_healthy
     volumes:
       - agent-output:/workspace
       - ./states:/workspace/states:ro
@@ -69,3 +95,4 @@ services:
 volumes:
   playwright-cache:
   agent-output:
+  postgres-data:

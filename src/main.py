@@ -64,6 +64,8 @@ async def main():
     logger.info(f"Mode: {args.mode}, Model: {args.model}")
 
     from .management.orchestrator import Orchestrator
+    from .tools.database import HistoryDB
+    import uuid
 
     config = {
         "llm": {
@@ -75,6 +77,12 @@ async def main():
         "max_time": args.max_time,
     }
 
+    db = HistoryDB()
+    await db.connect()
+
+    run_id = str(uuid.uuid4())
+    await db.begin_run(run_id, args.url, args.mode, args.model, args.requirement)
+
     orchestrator = Orchestrator(config=config)
 
     try:
@@ -83,6 +91,11 @@ async def main():
             requirement=args.requirement,
             mode=args.mode,
         )
+
+        records = result.get("data", [])
+        await db.save_records(run_id, records)
+        await db.complete_run(run_id, result.get("success", False), len(records))
+        await db.close()
 
         # Save output
         output_path = Path(args.output)
@@ -111,6 +124,8 @@ async def main():
 
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
+        await db.complete_run(run_id, False, 0)
+        await db.close()
         return 130
 
 

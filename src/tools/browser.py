@@ -275,6 +275,59 @@ class BrowserTool:
         """Go back to previous page."""
         await self.page.go_back()
 
+    async def download_url(self, url: str, save_dir: str = "") -> dict:
+        """Download a file at the given URL using the authenticated browser session.
+
+        Creates a temporary download-enabled context, copies auth cookies from the
+        current session (preserving CF clearance and login state), navigates to the
+        URL, captures the file download, and saves it to save_dir (defaults to
+        ARTIFACTS_DIR/files/).
+
+        Works for any domain — does not rely on fetch() so cross-domain and CDN
+        URLs are handled correctly. The download runs inside Camoufox so TLS
+        fingerprint and CF bypass are fully preserved.
+        """
+        import os
+        if not self.browser or not self.context:
+            return {"error": "Browser not started"}
+
+        if not save_dir:
+            artifacts_dir = os.environ.get("ARTIFACTS_DIR", "/workspace/artifacts")
+            save_dir = os.path.join(artifacts_dir, "files")
+        os.makedirs(save_dir, exist_ok=True)
+
+        dl_context = await self.browser.new_context(accept_downloads=True)
+        try:
+            # Copy all cookies (auth + CF clearance) into the download context
+            cookies = await self.context.cookies()
+            if cookies:
+                await dl_context.add_cookies(cookies)
+
+            dl_page = await dl_context.new_page()
+            try:
+                async with dl_page.expect_download(timeout=60000) as dl_info:
+                    try:
+                        await dl_page.goto(url, timeout=30000)
+                    except PlaywrightError as nav_err:
+                        # "Download is starting" / ERR_ABORTED is expected —
+                        # the download event is already captured above.
+                        if "download" not in str(nav_err).lower() and "aborted" not in str(nav_err).lower():
+                            raise
+                download = await dl_info.value
+                suggested = download.suggested_filename or "download.zip"
+                save_path = os.path.join(save_dir, suggested)
+                await download.save_as(save_path)
+                size = os.path.getsize(save_path)
+                logger.info(f"Downloaded {suggested} ({size} bytes) → {save_path}")
+                return {"path": save_path, "filename": suggested, "size_bytes": size}
+            finally:
+                await dl_page.close()
+        except Exception as e:
+            logger.error(f"download_url failed for {url}: {e}")
+            return {"error": str(e), "url": url}
+        finally:
+            await dl_context.close()
+
     # --- Content extraction ---
 
     async def get_html(self, selector: str | None = None) -> str:
@@ -289,6 +342,64 @@ class BrowserTool:
     async def get_text(self) -> str:
         """Get visible text content of the page (no HTML tags)."""
         return await self.page.inner_text("body")
+
+    async def get_page_state(self) -> dict:
+        """Get structured list of all visible interactive elements — browser-use style.
+
+        Returns numbered elements so the agent can reference them by index
+        instead of writing CSS selectors. Use click_element(index) to interact.
+        """
+        script = """
+        () => {
+            const tags = 'a,button,input,select,textarea,[role=button],[role=link],[role=menuitem],[role=tab]';
+            const els = Array.from(document.querySelectorAll(tags));
+            const result = [];
+            let idx = 0;
+            for (const el of els) {
+                if (el.offsetParent === null) continue;  // skip hidden
+                const rect = el.getBoundingClientRect();
+                if (rect.width === 0 && rect.height === 0) continue;  // skip zero-size
+                const text = (el.textContent || el.value || el.placeholder || '').trim()
+                    .replace(/\\s+/g, ' ').substring(0, 80);
+                const label = el.getAttribute('aria-label') || el.getAttribute('title') || '';
+                result.push({
+                    index: idx++,
+                    tag: el.tagName.toLowerCase(),
+                    text: text,
+                    label: label,
+                    href: el.getAttribute('href') || null,
+                    type: el.getAttribute('type') || null,
+                    x: Math.round(rect.x),
+                    y: Math.round(rect.y),
+                });
+            }
+            return result;
+        }
+        """
+        elements = await self.page.evaluate(script)
+        # Store index→element mapping for click_element
+        self._page_state_elements = elements
+        return {
+            "url": self.page.url,
+            "count": len(elements),
+            "elements": elements,
+        }
+
+    async def click_element(self, index: int) -> dict:
+        """Click a numbered element from the last get_page_state() call."""
+        elements = getattr(self, "_page_state_elements", [])
+        if not elements:
+            return {"error": "No page state loaded. Call get_page_state first."}
+        if index < 0 or index >= len(elements):
+            return {"error": f"Index {index} out of range (0-{len(elements)-1})"}
+        el = elements[index]
+        selector = f"xpath=(//a|//button|//input|//select|//textarea|//*[@role='button']|//*[@role='link']|//*[@role='menuitem']|//*[@role='tab'])[not(@style[contains(.,'display:none')])]"
+        # Click by position (x,y) — works for any element type
+        try:
+            await self.page.mouse.click(el["x"] + 5, el["y"] + 5)
+            return {"clicked": el, "success": True}
+        except Exception as e:
+            return {"error": str(e), "element": el}
 
     async def take_screenshot(self, path: str | None = None,
                               full_page: bool = False) -> bytes:

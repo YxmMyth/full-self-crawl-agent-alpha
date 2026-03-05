@@ -10,6 +10,7 @@ downloads/
 artifacts/
 states/
 output.json
+output*.json
 
 # Logs
 logs/

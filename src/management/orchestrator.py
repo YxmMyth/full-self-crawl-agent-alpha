@@ -195,8 +195,35 @@ class Orchestrator:
             "Get visible text content of the page",
             {"type": "object", "properties": {}})
 
+        registry.register("get_page_state", browser.get_page_state,
+            'Get ALL visible interactive elements as a numbered list — like browser-use.\n'
+            'Returns [{index, tag, text, label, href, x, y}, ...] for every visible button/link/input.\n'
+            'Use when you need to find a UI element without knowing its CSS selector.\n'
+            'After calling this, use click_element(index) to interact with a specific element.\n'
+            'Example: call get_page_state → see "[42] button \'Export\'" → call click_element(42)',
+            {"type": "object", "properties": {}})
+
+        registry.register("click_element", browser.click_element,
+            'Click a numbered element from the last get_page_state() call.\n'
+            'More reliable than click(selector) for dynamically discovered elements.\n'
+            'Example: get_page_state returns index=42 for Export button → click_element(42)',
+            {"type": "object",
+             "properties": {"index": {"type": "integer", "description": "Element index from get_page_state()"}},
+             "required": ["index"]})
+
+        registry.register("download_url", self._download_url_tool,
+            'Download a file from a URL using the authenticated browser session.\n'
+            'Copies auth cookies + CF clearance from the current session so the download\n'
+            'is authenticated and bypasses Cloudflare. Saves file to artifacts/files/.\n'
+            'Returns {path, filename, size_bytes} on success or {error, url} on failure.\n'
+            'After downloading a ZIP, call inspect_file(filename) to read its contents.\n'
+            'Use for: CodePen ZIP export, PDF downloads, any file download requiring auth.',
+            {"type": "object",
+             "properties": {"url": {"type": "string", "description": "Full URL of the file to download"}},
+             "required": ["url"]})
+
         registry.register("click", browser.click,
-            "Click an element on the page",
+            "Click an element on the page by CSS selector. Use click_element(index) instead when you obtained the element from get_page_state().",
             {"type": "object", "properties": {"selector": {"type": "string", "description": "CSS selector of element to click"}}, "required": ["selector"]})
 
         registry.register("fill", browser.fill,
@@ -235,8 +262,21 @@ class Orchestrator:
             '  "return document.title"  — bare return not allowed\n'
             '\n'
             'Use for: SPA/dynamic content, JS object state (e.g. CodeMirror editors), triggering events.\n'
-            'Returns the value of the expression/return statement.',
+            'Returns the value of the expression/return statement.\n'
+            'WARNING: If the result contains large strings (e.g., full source code), use js_extract_save instead to avoid polluting LLM context.',
             {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript arrow function or expression. Must NOT be a bare 'return' statement."}}, "required": ["script"]})
+
+        registry.register("js_extract_save", self._js_extract_save,
+            'Execute JavaScript and save the result DIRECTLY as extracted records — large data never enters LLM context.\n'
+            'The script should return a dict (single record) or a list of dicts (multiple records).\n'
+            '\n'
+            'Use this instead of evaluate_js when:\n'
+            '- The result contains large strings (source code, minified JS, full articles)\n'
+            '- You want to save extracted data without the full content going through context\n'
+            '\n'
+            'Returns a summary: {"saved": N, "summary": [{field: "(N chars)", ...}]}\n'
+            'The full content is saved to the records pipeline automatically.',
+            {"type": "object", "properties": {"script": {"type": "string", "description": "JavaScript arrow function returning a dict or list of dicts to save as records."}}, "required": ["script"]})
 
         # --- Extraction tools (2) ---
         registry.register("extract_css", lambda **kwargs: extract_with_css(browser, **kwargs),
@@ -905,6 +945,55 @@ class Orchestrator:
         if self._artifacts:
             return self._artifacts.inspect_file(filename)
         return {"error": "Artifacts not initialized"}
+
+    async def _download_url_tool(self, url: str) -> dict:
+        """Tool: download a file via the authenticated browser, track it in artifacts."""
+        save_dir = str(self._artifacts.files_dir) if self._artifacts else "./artifacts/files"
+        result = await self._browser.download_url(url, save_dir=save_dir)
+        if "error" not in result and self._artifacts:
+            self._artifacts.add_file({
+                "filename": result.get("filename", ""),
+                "size": result.get("size_bytes", 0),
+                "type": "zip" if result.get("filename", "").endswith(".zip") else "file",
+                "url": url,
+                "description": "Downloaded via download_url",
+            })
+        return result
+
+    async def _js_extract_save(self, script: str) -> dict:
+        """Evaluate JS, save result as records, return only a summary — large data never enters LLM context."""
+        import uuid
+        result = await self._browser.evaluate(script)
+        if result is None:
+            return {"error": "JS returned null/undefined"}
+
+        records = result if isinstance(result, list) else [result]
+        # Build summary: replace long string values with char-count placeholders
+        SUMMARY_THRESH = 500
+        summary_records = []
+        for rec in records:
+            if isinstance(rec, dict):
+                summary_records.append({
+                    k: (f"({len(v)} chars)" if isinstance(v, str) and len(v) > SUMMARY_THRESH else v)
+                    for k, v in rec.items()
+                })
+            else:
+                summary_records.append(rec)
+
+        if self._artifacts:
+            self._artifacts.add_records(records)
+            self._artifacts.write_manifest()
+        else:
+            logger.warning("js_extract_save: artifacts not initialized, records not persisted")
+
+        saved = len(records)
+        logger.info(f"js_extract_save: saved {saved} record(s) directly from JS result")
+        return {
+            "saved": saved,
+            "summary": summary_records,
+            "_records": records,  # side-channel for controller._collect_side_channel
+            "note": "Full data saved to records pipeline. LLM context shows summary only.",
+        }
 
     async def cleanup(self) -> None:
         """Release resources."""
