@@ -234,6 +234,7 @@ class BrowserTool:
     async def navigate(self, url: str, wait_until: str = "networkidle",
                        timeout: int = 30000) -> dict:
         """Navigate to URL and return page metadata including timing."""
+        import asyncio as _asyncio
         import time as _time
         if self.page is None:
             await self.start()
@@ -244,9 +245,29 @@ class BrowserTool:
             await self.page.goto(url, wait_until=wait_until, timeout=timeout)
         except Exception as e:
             if wait_until == "networkidle" and "Timeout" in str(e):
-                logger.info(f"networkidle timeout, falling back to load: {url}")
-                actual_strategy = "load (networkidle timed out)"
-                await self.page.goto(url, wait_until="load", timeout=timeout)
+                logger.info(f"networkidle timeout, using DOM-stability wait: {url}")
+                actual_strategy = "dom-stable"
+                # networkidle fails on SPAs with persistent connections (analytics,
+                # WebSockets). Instead of waiting for network, wait for DOM to stop
+                # growing — this reliably catches when SPA content has rendered.
+                last_count = 0
+                stable_ticks = 0
+                for _ in range(15):  # poll for up to 15s
+                    await _asyncio.sleep(1)
+                    try:
+                        count = await self.page.evaluate(
+                            "document.querySelectorAll('*').length"
+                        )
+                    except Exception:
+                        break
+                    if count == last_count:
+                        stable_ticks += 1
+                        if stable_ticks >= 2:  # stable for 2 consecutive seconds
+                            actual_strategy = "dom-stable"
+                            break
+                    else:
+                        stable_ticks = 0
+                        last_count = count
             else:
                 raise
         elapsed_ms = int((_time.time() - start) * 1000)
@@ -254,13 +275,22 @@ class BrowserTool:
         # Collect page metadata for agent awareness
         title = await self.page.title() or ""
         final_url = self.page.url
-        # Quick element count to detect empty/blocked pages
         elem_count = await self.page.evaluate("document.querySelectorAll('*').length")
+        link_count = await self.page.evaluate("document.querySelectorAll('a[href]').length")
+
         page_hint = ""
         if elem_count < 10:
             page_hint = "Page appears empty (SPA not loaded, or blocked by anti-bot)"
         elif "just a moment" in title.lower() or "cloudflare" in title.lower():
             page_hint = "Possible Cloudflare challenge page detected"
+        elif actual_strategy in ("dom-stable", "load (networkidle timed out)") and elem_count > 50:
+            # SPA rendered (DOM stable) but background analytics keep network active.
+            # This is NORMAL for modern SPAs — content is ready, just read the DOM.
+            page_hint = (
+                f"SPA rendered ({elem_count} elements, {link_count} links). "
+                "Use analyze_links() to find page links. "
+                "Do NOT navigate again."
+            )
 
         return {
             "url": final_url,
@@ -268,6 +298,7 @@ class BrowserTool:
             "load_time_ms": elapsed_ms,
             "strategy": actual_strategy,
             "element_count": elem_count,
+            "link_count": link_count,
             "hint": page_hint,
         }
 

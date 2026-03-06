@@ -41,8 +41,8 @@ async def main():
     parser.add_argument("--mode", "-m", default="full_site",
                         choices=["full_site", "single_page"],
                         help="Crawl mode (default: full_site)")
-    parser.add_argument("--model", default="claude-opus-4-5",
-                        help="LLM model to use")
+    parser.add_argument("--model", default="",
+                        help="LLM model to use (default: from config/settings.json or LLM_MODEL env)")
     parser.add_argument("--api-key", default="",
                         help="LLM API key (or set LLM_API_KEY env var)")
     parser.add_argument("--base-url", default="",

@@ -41,17 +41,24 @@ class SkillLibrary:
                 logger.warning(f"Could not load skills from {self.path}: {e}")
                 self._skills = []
 
-    def get_relevant_skills(self, url: str) -> list[dict]:
+    def get_relevant_skills(self, url: str, role: str | None = None) -> list[dict]:
         """Return skills whose url_pattern matches the given URL.
 
         Pattern matching uses fnmatch glob syntax:
           'codepen.io/*/pen/*'  matches  'codepen.io/user123/pen/abcXYZ'
+
+        If role is provided, only return skills with matching role
+        (skills without a 'role' field default to 'extraction' for backward compat).
         """
         matched = []
         for skill in self._skills:
             pattern = skill.get("url_pattern", "")
-            if pattern and fnmatch(url, f"*{pattern}*"):
-                matched.append(skill)
+            if not pattern or not fnmatch(url, f"*{pattern}*"):
+                continue
+            skill_role = skill.get("role", "extraction")
+            if role is not None and skill_role != role:
+                continue
+            matched.append(skill)
         return matched
 
     def save_skill(self, skill: dict) -> None:
@@ -79,10 +86,19 @@ class SkillLibrary:
         """Format matched skills as a prompt-injectable string."""
         if not skills:
             return ""
-        lines = ["Verified strategies for this URL:"]
+        lines = ["⚡ Verified strategies for this URL — use these:"]
         for s in skills:
-            lines.append(f"\n[Skill: {s['name']}]")
-            lines.append(f"  Tool: {s['tool']}")
-            lines.append(f"  Code: {s['code']}")
-            lines.append(f"  Note: {s['description']}")
+            lines.append(f"\n[{s['name']}] (verified {s.get('verified_count', 1)}x)")
+            if s.get("code"):
+                # Extraction skill: show the JS code to call
+                lines.append(f"  Call: {s['tool']}(script=<code below>)")
+                lines.append(f"  Code: {s['code']}")
+            elif s.get("steps"):
+                # Multi-step skill
+                for step in s["steps"]:
+                    lines.append(f"  Step: {step}")
+            elif s.get("tool"):
+                # Exploration/navigation skill: just recommend the tool
+                lines.append(f"  Use: {s['tool']}() — not get_html()")
+            lines.append(f"  Why: {s['description']}")
         return "\n".join(lines)

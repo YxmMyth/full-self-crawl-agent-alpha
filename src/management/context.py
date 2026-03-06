@@ -67,55 +67,57 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are a URL discovery agent. Your mission:
-1. Find URLs of pages that contain the target data
-2. Report them via report_urls() in execute_code — this is your PRIMARY output
-3. Stop as soon as you have found enough target URLs
+            role_text = """You are a URL discovery agent.
 
-IMPORTANT: The URLs you report become the targets for the extraction phase.
-Do NOT navigate to detail pages — that is the extraction phase's job.
-Do NOT try to extract data content — just find the URLs.
-Only report URLs you actually found on the page, never fabricate them.
+Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code. That is your only output — do not extract data content, never fabricate URLs.
 
-Exploration protocol (works for any website):
-1. Navigate to the listing/search page
-2. Call analyze_links() — reads rendered DOM, returns links with url/text/category fields
-   (category: "detail" = content pages you want | "list" = more listing pages | "nav" = skip these)
-3. From the results:
-   - Focus on "detail" category links first — these are the target content pages
-   - Also check "other" category: if URL has 3+ path segments (e.g. /user/pen/slug), it's likely a detail page
-   - SKIP "nav" category and "list" links (unless you need to paginate)
-   - Use the link text to confirm relevance to your task
-4. Call execute_code with: report_urls([list_of_relevant_detail_urls])
-   — report_urls automatically rejects homepage, nav paths, and short utility URLs
-5. If the page has pagination or more results after scrolling, navigate and repeat
+Before navigating, reason about what you already know:
+- Skill library (see above): if a verified URL pattern exists for this site, use it directly
+- Task hints: do they describe the URL structure or listing pages?
 
-Do NOT call save_records() during exploration — your only output is report_urls().
+If you don't yet know the URL structure, discover it first — choose the approach that fits:
+- bash: curl robots.txt to find a sitemap → fetch it to see URL patterns and scale instantly
+- navigate + analyze_links(): see categorized links directly from the rendered page
+- Both are valid; use whichever gives you the information faster
 
-SPA pages (when navigate hint mentions "SPA detected"):
-- Do NOT navigate away — the content is just still loading
-- The 2-second wait is already applied; analyze_links() will see the rendered content
-- If analyze_links returns few links, wait and retry once
+Reading navigate() results — act on these signals immediately:
+1. hint contains "SPA loaded" or "network still active" → page IS loaded but rendering. Call analyze_links() RIGHT NOW. Do NOT navigate again — navigating resets the SPA render cycle.
+2. element_count < 20 → page empty/blocked. May retry or try bash curl.
+3. strategy = "networkidle" → fully rendered. Use analyze_links() or get_html().
 
-When done, summarize:
-- How many target URLs you found
-- What kind of pages they point to"""
+If analyze_links() and evaluate_js() both return no target URLs:
+- Try bash to hit a REST API or sitemap instead of the browser SPA
+- Try paginating (add ?page=2) or a different listing URL
+- If truly nothing found after 3 different approaches, report_urls([]) with a summary explaining why
+
+Once you have candidate URLs, judge before reporting:
+- Do they match the "detail" category pattern (3+ path segments, e.g. /user/name/slug)?
+- Does the URL pattern match what the task is asking for?
+
+Do NOT call save_records() during exploration.
+
+When done, summarize: how many target URLs found and what kind of pages they are."""
+
+            feedback = task.get("feedback")
+            if feedback:
+                role_text += (
+                    f"\n\nPrevious exploration produced poor results:\n"
+                    f"- These pages yielded no data: {feedback.get('failed_pages', [])}\n"
+                    f"- Records collected so far: {feedback.get('total_records', 0)}\n"
+                    f"- Try different sections, URL patterns, or listing pages this time."
+                )
         else:
-            role_text = """You are a data analysis agent. Your mission:
-1. Understand the data on this page — fields, structure, quality, patterns
-2. Collect representative high-quality samples via save_records() in execute_code
-3. Assess: what fields exist? Are there missing values? What's the data quality?
+            role_text = """You are a data extraction agent.
 
-Approach:
-- Analyze the page structure first (execute_code with BeautifulSoup)
-- Extract a representative sample of records — cover variety, not just volume
-- Use save_records(items) to persist samples. The pipeline tracks your progress.
-- If you see different categories/types of data, sample from each
+Mission: extract high-quality data from the target URL and save it via save_records() in execute_code or js_extract_save.
 
-When done, stop and summarize what you learned about the data:
-- Fields available and their completeness
-- Data quality observations
-- Approximate total data volume on this page/section"""
+If the task context shows a ⚡ verified skill for this URL, call it first — it was verified to work.
+
+Assess: what fields exist, what's the structure, what's the quality? Extract a sample with variety.
+
+Do NOT navigate away or call go_back — you are assigned this specific page to extract from.
+
+When done, say "TASK COMPLETE" with a summary of fields and data volume."""
 
         site_context = task.get("site_context", "")
         if site_context:
@@ -220,23 +222,46 @@ Rules:
 
             parts.extend(progress_lines)
 
-        # Skill library: inject verified extraction strategies for current/initial URL
-        try:
-            from ..tools.skill_library import SkillLibrary
-            _lib = SkillLibrary()
-            # Check both the current page URL (after navigation) and initial task URL
-            _urls_to_check = [task.get("current_url", ""), task.get("url", "")]
-            _skills: list = []
-            _seen_ids: set = set()
-            for _u in _urls_to_check:
-                for s in _lib.get_relevant_skills(_u):
-                    if s.get("id") not in _seen_ids:
-                        _skills.append(s)
-                        _seen_ids.add(s.get("id"))
-            if _skills:
-                parts.append(f"\n{_lib.format_for_prompt(_skills)}")
-        except Exception:
-            pass  # Skill library is optional; never block execution
+        # Skill library: inject verified strategies for current/initial URL
+        # Extraction mode: extraction-role skills (JS code)
+        # Exploration mode: exploration-role skills (navigation guidance)
+        role = task.get("role", "extraction")
+        if role in ("extraction", "exploration"):
+            try:
+                from ..tools.skill_library import SkillLibrary
+                _lib = SkillLibrary()
+                _urls_to_check = [task.get("current_url", ""), task.get("url", "")]
+                _skills: list = []
+                _seen_ids: set = set()
+                for _u in _urls_to_check:
+                    for s in _lib.get_relevant_skills(_u, role=role):
+                        if s.get("id") not in _seen_ids:
+                            _skills.append(s)
+                            _seen_ids.add(s.get("id"))
+                if _skills:
+                    parts.append(f"\n{_lib.format_for_prompt(_skills)}")
+            except Exception:
+                pass  # Skill library is optional; never block execution
+
+        # Site reconnaissance: robots.txt excerpt and sitemap candidates (if available)
+        site_recon = task.get("site_recon")
+        if site_recon:
+            recon_lines = []
+            robots_txt = site_recon.get("robots_txt", "")
+            if robots_txt:
+                recon_lines.append(f"\nSite robots.txt (fetched before your session):\n{robots_txt[:500]}")
+            sitemap_candidates = site_recon.get("sitemap_candidates", [])
+            if sitemap_candidates:
+                recon_lines.append(
+                    f"\nSitemap pre-loaded {len(sitemap_candidates)} candidate URLs matching this task."
+                    f" Sample: {sitemap_candidates[:5]}"
+                )
+                recon_lines.append(
+                    "If these match the target pattern, report them with report_urls() directly"
+                    " — no need to navigate to every one."
+                )
+            if recon_lines:
+                parts.extend(recon_lines)
 
         # Prior experience from previous pages
         prior = task.get("prior_experience")

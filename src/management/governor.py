@@ -112,6 +112,15 @@ class Governor:
             if all(not s.succeeded for s in recent):
                 return f"Stuck in loop: {recent[0].tool_name} failed 3 consecutive times with same args"
 
+        # Navigate URL loop hard stop — same URL visited 5+ times means SPA isn't rendering
+        # (rate-limited, blocked, or fundamentally wrong approach). Soft nudges at 2-4 didn't help.
+        for url, count in self._navigate_counts.items():
+            if count >= 5:
+                return (
+                    f"Navigation loop: '{url}' visited {count} times with no progress. "
+                    f"SPA may be rate-limited or blocked. Stopping exploration."
+                )
+
         return None
 
     def get_nudges(self, history, data: list[dict] | None = None,
@@ -158,13 +167,20 @@ class Governor:
             if count >= 4:
                 nudges.append(
                     f"⚠️ You have navigated to {url} {count} times. "
-                    f"This page is likely not loading the content you need. "
-                    f"Try a completely different approach: use bash(curl), evaluate_js, or different URLs."
+                    f"This page is not delivering the content you need via navigation. "
+                    f"Try: evaluate_js(\"Array.from(document.querySelectorAll('a[href]')).map(a=>a.href)\") "
+                    f"or bash(curl) or a completely different URL."
                 )
             elif count >= 3:
                 nudges.append(
-                    f"⚠️ You have navigated to {url} {count} times already. "
-                    f"If it hasn't worked before, repeating won't help. Consider alternatives."
+                    f"⚠️ You have navigated to {url} {count} times. "
+                    f"Repeating the same navigation will not help. "
+                    f"Call analyze_links() or evaluate_js() to read the current DOM instead."
+                )
+            elif count >= 2:
+                nudges.append(
+                    f"⚠️ Navigated to {url} twice with no progress. "
+                    f"Before navigating again: call analyze_links() to check what the rendered DOM currently has."
                 )
 
         # Action repetition detection (rolling window)

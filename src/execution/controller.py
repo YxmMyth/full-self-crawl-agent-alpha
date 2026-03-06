@@ -323,18 +323,29 @@ class CrawlController:
     def _extract_successful_tools(self) -> list[dict]:
         """Extract successful tool calls for cross-page context.
 
-        Returns ALL successful steps — the agent on the next page decides
-        what's relevant, not us.
+        execute_code/bash calls get their code preserved up to 2000 chars —
+        this is the most valuable cross-page knowledge (extraction patterns).
+        Other tools are included only if their args are short (<= 500 chars).
         """
         successful = []
         for step in self.history.steps:
             if step.succeeded:
-                args_str = json.dumps(step.tool_call.arguments, default=str)
-                if len(args_str) <= 500:
-                    successful.append({
-                        "tool": step.tool_name,
-                        "args": step.tool_call.arguments,
-                    })
+                if step.tool_name in ("execute_code", "bash"):
+                    # Always preserve code — silently dropping it was a bug
+                    code = step.tool_call.arguments.get("code", "")
+                    if code:
+                        successful.append({
+                            "tool": step.tool_name,
+                            "code": code[:2000],
+                            "language": step.tool_call.arguments.get("language", "python"),
+                        })
+                else:
+                    args_str = json.dumps(step.tool_call.arguments, default=str)
+                    if len(args_str) <= 500:
+                        successful.append({
+                            "tool": step.tool_name,
+                            "args": step.tool_call.arguments,
+                        })
         return successful
 
     def _extract_failed_tools(self) -> list[dict]:

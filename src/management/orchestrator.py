@@ -188,7 +188,7 @@ class Orchestrator:
             {"type": "object", "properties": {}})
 
         registry.register("get_html", self._get_clean_html,
-            "Get page HTML (cleaned: no scripts/styles). Use selector param to scope to a specific element for smaller output.",
+            "Get page HTML (cleaned: no scripts/styles). Returns STATIC HTML only — for SPA/React pages, dynamically-loaded content will NOT appear here; use analyze_links() instead to get live DOM links.",
             {"type": "object", "properties": {"selector": {"type": "string", "description": "Optional CSS selector to scope HTML (e.g. 'body', '.main-content', '#results')"}}})
 
         registry.register("get_text", browser.get_text,
@@ -306,8 +306,16 @@ class Orchestrator:
             {"type": "object", "properties": {}})
 
         registry.register("analyze_links", lambda **kwargs: analyze_links(browser, **{k: v for k, v in kwargs.items() if k in ('html', 'base_url')}),
-            'Extract and categorize all links on the current page.\n'
-            'Returns links grouped by type (navigation, pagination, detail, external).\n'
+            'Extract and categorize all links on the current live page (uses rendered DOM — works for SPA/React pages).\n'
+            'Returns: {links: [{url, text, category}, ...], counts: {detail, list, nav, other}}\n'
+            '\n'
+            'category meanings:\n'
+            '  "detail" = content pages you want (3+ path segments, e.g. /user/pen/slug)\n'
+            '  "list"   = more listing/search pages to paginate through\n'
+            '  "nav"    = site navigation — skip these\n'
+            '  "other"  = check manually; URLs with 3+ segments are often detail pages\n'
+            '\n'
+            'Focus on "detail" links first, then check "other" for missed detail pages.\n'
             'Takes no parameters — operates on the current page.',
             {"type": "object", "properties": {}})
 
@@ -363,11 +371,16 @@ class Orchestrator:
                 '- $PAGE_HTML_FILE: path to current page HTML file\n'
                 '- $PAGE_URL: current page URL\n'
                 '\n'
-                'Examples:\n'
+                'Site reconnaissance (exploration):\n'
+                '  curl -sL "$PAGE_URL/../robots.txt" 2>/dev/null | grep -i sitemap\n'
+                '  → finds Sitemap URL; then fetch it to see URL patterns and total item count\n'
+                '  curl -sL SITEMAP_URL 2>/dev/null | grep -o "<loc>[^<]*</loc>" | head -40\n'
+                '\n'
+                'API discovery:\n'
                 '  curl -s "https://api.site.com/data" | jq ".items[] | {name, price}"\n'
                 '  cat "$PAGE_HTML_FILE" | grep -oP \'href="([^"]+)"\' | sort -u\n'
                 '\n'
-                'Use when you discover API endpoints or need Unix text processing.',
+                'Use when you discover API endpoints, need sitemap reconnaissance, or Unix text processing.',
                 {"type": "object", "properties": {"command": {"type": "string", "description": "Bash command(s) to execute"}}, "required": ["command"]})
 
         # --- Reasoning (1) ---
@@ -424,6 +437,93 @@ class Orchestrator:
         self._tools = registry
         return registry
 
+    async def _site_recon(self, url: str) -> dict:
+        """Pre-exploration: fetch robots.txt + sitemap for site intelligence.
+
+        Returns a dict with:
+          - robots_txt: str (content or "" if blocked/missing)
+          - sitemap_candidates: list[str] (filtered detail-page URLs from sitemap)
+          - sitemap_found: bool
+
+        This is a best-effort operation — failures are non-fatal.
+        For CF-protected sites, robots.txt may be inaccessible; that's OK.
+        """
+        import re
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        base = f"{parsed.scheme}://{parsed.netloc}"
+        recon: dict = {"robots_txt": "", "sitemap_candidates": [], "sitemap_found": False}
+
+        try:
+            import httpx
+            headers = {
+                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
+            }
+            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
+                # 1. robots.txt
+                r = await client.get(f"{base}/robots.txt", headers=headers)
+                robots_txt = r.text if r.status_code == 200 else ""
+                # Reject HTML responses (CF challenge / 404 pages)
+                if robots_txt and robots_txt.strip().startswith("<"):
+                    robots_txt = ""
+                recon["robots_txt"] = robots_txt
+
+                # 2. Parse Sitemap directives
+                sitemap_urls = re.findall(
+                    r"^Sitemap:\s*(.+)$", robots_txt, re.MULTILINE | re.IGNORECASE
+                )
+                all_locs: list[str] = []
+                for smap_url in sitemap_urls[:3]:
+                    smap_url = smap_url.strip()
+                    try:
+                        sr = await client.get(smap_url, headers=headers)
+                        if sr.status_code != 200:
+                            continue
+                        locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", sr.text, re.DOTALL)
+                        # Handle sitemap index (nested sitemaps)
+                        if "<sitemapindex" in sr.text:
+                            for nested in locs[:5]:
+                                try:
+                                    nr = await client.get(nested.strip(), headers=headers)
+                                    if nr.status_code == 200:
+                                        nested_locs = re.findall(
+                                            r"<loc>\s*(.*?)\s*</loc>", nr.text, re.DOTALL
+                                        )
+                                        all_locs.extend(nested_locs)
+                                except Exception:
+                                    pass
+                        else:
+                            all_locs.extend(locs)
+                    except Exception:
+                        pass
+
+                # 3. Filter to detail-page candidates (3+ path segments)
+                candidates: list[str] = []
+                base_netloc = parsed.netloc
+                for loc in all_locs:
+                    try:
+                        lp = urlparse(loc.strip())
+                        if lp.netloc and base_netloc not in lp.netloc:
+                            continue
+                        segments = [s for s in lp.path.split("/") if s]
+                        if len(segments) >= 3:
+                            candidates.append(loc.strip())
+                    except Exception:
+                        pass
+                recon["sitemap_candidates"] = candidates[:200]
+                recon["sitemap_found"] = bool(sitemap_urls)
+
+        except Exception as e:
+            logger.debug(f"Site recon non-fatal error: {e}")
+
+        logger.info(
+            f"Site recon: robots={'yes' if recon['robots_txt'] else 'blocked/missing'}, "
+            f"sitemap_found={recon['sitemap_found']}, "
+            f"candidates={len(recon['sitemap_candidates'])}"
+        )
+        return recon
+
     async def _build_spec(self, url: str, requirement: str,
                           spec_dict: dict | None):
         """Build CrawlSpec from user input."""
@@ -440,10 +540,17 @@ class Orchestrator:
         return CrawlSpec(url=url, requirement="Extract main content from this page")
 
     async def _run_full_site(self, url: str, spec, tools, task_id: str) -> dict:
-        """Full site mode: exploration → extraction.
+        """Full site mode: exploration → extraction → optional re-exploration.
 
-        Phase 1: Exploration controller discovers site structure
-        Phase 2: Extraction controller processes each target page
+        Implements a macro agent loop:
+          explore → extract → quality-check → (re-explore if needed) → done
+
+        Quality gate: 3 consecutive empty pages after at least 3 pages tried
+        → build deterministic feedback dict → re-explore with that context.
+        Max 2 exploration rounds (no infinite loops).
+
+        experience_log accumulates cross-page context across the entire run
+        (Reflexion pattern: reflections accumulate, never replaced).
         """
         from ..execution.controller import CrawlController
         from ..strategy.gate import CompletionGate
@@ -457,118 +564,170 @@ class Orchestrator:
         # Seed seen_urls with the start URL
         self._seen_urls.add(url)
 
-        # --- Phase 1: Exploration ---
-        logger.info(f"Phase 1: Exploring {url}")
-        explore_governor = Governor(
-            max_steps=50, max_llm_calls=30, max_time_seconds=300,
-            monitor=RiskMonitor(),
-        )
-        explore_context = ContextManager(max_history_steps=3)
+        # Pre-exploration: robots.txt + sitemap reconnaissance (deterministic, best-effort)
+        site_recon = await self._site_recon(url)
 
-        explore_task = {
-            "url": url,
-            "spec": spec,
-            "role": "exploration",
-        }
+        # Accumulated cross-page context — grows throughout the run, never replaced
+        experience_log: list[str] = []
+        exploration_feedback: dict | None = None
+        total_pages_extracted = 0
+        last_target_urls: list[str] = [url]
 
-        explore_controller = CrawlController(
-            llm_client=self._llm,
-            tools=tools,
-            governor=explore_governor,
-            context_mgr=explore_context,
-        )
-
-        explore_result = await explore_controller.run(explore_task)
-        target_urls = explore_result.get("new_links", [])
-
-        # Preserve Phase 1 records (exploration may collect metadata)
-        phase1_data = explore_result.get("data", [])
-        if phase1_data:
-            all_data.extend(phase1_data)
-            logger.info(f"Phase 1 collected {len(phase1_data)} records")
-
-        # If exploration found no links, try the start URL itself
-        if not target_urls:
-            target_urls = [url]
-
-        logger.info(f"Phase 1 complete: found {len(target_urls)} target pages")
-
-        # --- Phase 2: Extraction ---
-        from .scheduler import CrawlFrontier
-        frontier = CrawlFrontier(max_depth=1, max_urls=50)
-        frontier.set_base_domain(url)
-        frontier.add_batch(
-            [{"url": u, "category": "detail"} for u in target_urls],
-            depth=0, parent_url=url,
-        )
-
-        site_context = explore_result.get("summary", "")
-        pages_extracted = 0
-        prior_experience = None  # Accumulated cross-page context
-
-        while True:
-            task_item = frontier.next()
-            if not task_item:
-                break
-
-            logger.info(f"Phase 2: Extracting {task_item.url} ({pages_extracted+1}/{len(target_urls)})")
-
-            extract_governor = Governor(
-                max_steps=30, max_llm_calls=30, max_time_seconds=300,
-                gate=CompletionGate(),
+        for _explore_round in range(2):
+            # --- Phase 1: Exploration ---
+            logger.info(f"Phase 1: Exploring {url} (round {_explore_round + 1})")
+            explore_governor = Governor(
+                max_steps=50, max_llm_calls=30, max_time_seconds=300,
                 monitor=RiskMonitor(),
             )
-            extract_context = ContextManager(max_history_steps=3)
+            explore_context = ContextManager(max_history_steps=3)
 
-            extract_task = {
-                "url": task_item.url,
+            explore_task: dict = {
+                "url": url,
                 "spec": spec,
-                "role": "extraction",
-                "site_context": site_context,
-                "prior_experience": prior_experience,
+                "role": "exploration",
+                "site_recon": site_recon,
             }
+            if exploration_feedback:
+                explore_task["feedback"] = exploration_feedback
 
-            extract_controller = CrawlController(
+            explore_controller = CrawlController(
                 llm_client=self._llm,
                 tools=tools,
-                governor=extract_governor,
-                context_mgr=extract_context,
+                governor=explore_governor,
+                context_mgr=explore_context,
             )
 
-            result = await extract_controller.run(extract_task)
-            page_data = result.get("data", [])
-            page_files = result.get("files", [])
-            all_data.extend(page_data)
-            all_files.extend(page_files)
-            pages_extracted += 1
+            explore_result = await explore_controller.run(explore_task)
+            target_urls = explore_result.get("new_links", [])
+            last_target_urls = target_urls or [url]
 
-            self._state_mgr.record_page_visit(task_id, task_item.url)
-            self._state_mgr.add_data(task_id, page_data)
+            # Preserve Phase 1 records (exploration may collect metadata)
+            phase1_data = explore_result.get("data", [])
+            if phase1_data:
+                all_data.extend(phase1_data)
+                logger.info(f"Phase 1 collected {len(phase1_data)} records")
 
-            # Build cross-page experience: raw facts, agent decides what's useful
-            successful_tools = result.get("successful_tools", [])
-            failed_tools = result.get("failed_tools", [])
-            stop_reason = result.get("stop_reason", "")
-            metrics = result.get("metrics", {})
-            elapsed = metrics.get("elapsed_seconds", 0)
-            steps = result.get("steps", 0)
-            avg_time = round(elapsed / max(steps, 1), 1)
-            prior_experience = (
-                f"Previous page ({task_item.url}): "
-                f"{len(page_data)} records extracted, {len(page_files)} files downloaded, {len(all_data)} total records so far.\n"
-                f"Stop reason: {stop_reason}\n"
-                f"Timing: {elapsed:.0f}s total, {steps} steps, ~{avg_time}s per step (navigation is typically the slowest action).\n"
-                f"Approaches that worked: {json.dumps(successful_tools[-5:], default=str, ensure_ascii=False) if successful_tools else 'none'}\n"
-                f"Approaches that failed: {json.dumps(failed_tools[-5:], default=str, ensure_ascii=False) if failed_tools else 'none'}\n"
-                f"Sample record: {json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
+            # If exploration found no links, try the start URL itself
+            if not target_urls:
+                target_urls = [url]
+
+            logger.info(f"Phase 1 complete: found {len(target_urls)} target pages")
+
+            # --- Phase 2: Extraction ---
+            from .scheduler import CrawlFrontier
+            frontier = CrawlFrontier(max_depth=1, max_urls=50)
+            frontier.set_base_domain(url)
+            frontier.add_batch(
+                [{"url": u, "category": "detail"} for u in target_urls],
+                depth=0, parent_url=url,
             )
 
-            # Check completion gate
-            gate = CompletionGate()
-            decision = gate.check(all_data, spec)
-            if decision.met:
-                logger.info(f"Completion gate met: {decision.reason}")
+            site_context = explore_result.get("summary", "")
+            pages_extracted = 0
+            prior_experience = "\n---\n".join(experience_log) if experience_log else None
+            zero_record_streak = 0
+            needs_reexplore = False
+            failed_pages_this_round: list[str] = []
+
+            while True:
+                task_item = frontier.next()
+                if not task_item:
+                    break
+
+                logger.info(
+                    f"Phase 2: Extracting {task_item.url} "
+                    f"({total_pages_extracted + pages_extracted + 1}/{len(target_urls)})"
+                )
+
+                extract_governor = Governor(
+                    max_steps=30, max_llm_calls=30, max_time_seconds=300,
+                    gate=CompletionGate(),
+                    monitor=RiskMonitor(),
+                )
+                extract_context = ContextManager(max_history_steps=3)
+
+                extract_task = {
+                    "url": task_item.url,
+                    "spec": spec,
+                    "role": "extraction",
+                    "site_context": site_context,
+                    "prior_experience": prior_experience,
+                }
+
+                extract_controller = CrawlController(
+                    llm_client=self._llm,
+                    tools=tools,
+                    governor=extract_governor,
+                    context_mgr=extract_context,
+                )
+
+                result = await extract_controller.run(extract_task)
+                page_data = result.get("data", [])
+                page_files = result.get("files", [])
+                all_data.extend(page_data)
+                all_files.extend(page_files)
+                pages_extracted += 1
+
+                self._state_mgr.record_page_visit(task_id, task_item.url)
+                self._state_mgr.add_data(task_id, page_data)
+
+                # Track consecutive empty pages for quality gate
+                if len(page_data) == 0:
+                    zero_record_streak += 1
+                    failed_pages_this_round.append(task_item.url)
+                else:
+                    zero_record_streak = 0
+
+                # Build accumulated cross-page experience (Reflexion pattern)
+                successful_tools = result.get("successful_tools", [])
+                failed_tools = result.get("failed_tools", [])
+                stop_reason = result.get("stop_reason", "")
+                metrics = result.get("metrics", {})
+                elapsed = metrics.get("elapsed_seconds", 0)
+                steps = result.get("steps", 0)
+                avg_time = round(elapsed / max(steps, 1), 1)
+
+                entry = (
+                    f"Page {total_pages_extracted + pages_extracted} ({task_item.url}): "
+                    f"{len(page_data)} records, {len(all_data)} total so far.\n"
+                    f"  stop={stop_reason}, {elapsed:.0f}s, {steps} steps (~{avg_time}s/step)\n"
+                    f"  code_that_worked={json.dumps(successful_tools[-3:], default=str, ensure_ascii=False)}\n"
+                    f"  failed={json.dumps(failed_tools[-3:], default=str, ensure_ascii=False)}\n"
+                    f"  sample={json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
+                )
+                experience_log.append(entry)
+                if len(experience_log) > 3:
+                    experience_log = experience_log[-3:]
+                prior_experience = "\n---\n".join(experience_log)
+
+                # Quality gate: 3 consecutive empty pages → trigger re-exploration
+                # Only on round 0 (one re-exploration allowed)
+                if zero_record_streak >= 3 and pages_extracted >= 3 and _explore_round == 0:
+                    exploration_feedback = {
+                        "failed_pages": failed_pages_this_round[-5:],
+                        "pages_tried": pages_extracted,
+                        "total_records": len(all_data),
+                        "sample_record": all_data[0] if all_data else None,
+                    }
+                    needs_reexplore = True
+                    logger.info(
+                        f"Quality gate: {zero_record_streak} consecutive empty pages after "
+                        f"{pages_extracted} tried. Triggering re-exploration."
+                    )
+                    break
+
+                # Check completion gate
+                gate = CompletionGate()
+                decision = gate.check(all_data, spec)
+                if decision.met:
+                    logger.info(f"Completion gate met: {decision.reason}")
+                    break
+
+            total_pages_extracted += pages_extracted
+            if not needs_reexplore:
                 break
+            logger.info(f"Round {_explore_round + 1} done. Re-exploring with feedback.")
 
         # Track files in artifact manager
         if self._artifacts and all_files:
@@ -579,11 +738,11 @@ class Orchestrator:
             "success": len(all_data) > 0 or len(all_files) > 0,
             "data": all_data,
             "files": all_files,
-            "pages_extracted": pages_extracted,
-            "summary": f"Extracted {len(all_data)} records{file_summary} from {pages_extracted} pages",
+            "pages_extracted": total_pages_extracted,
+            "summary": f"Extracted {len(all_data)} records{file_summary} from {total_pages_extracted} pages",
             "metrics": {
-                "pages_found": len(target_urls),
-                "pages_extracted": pages_extracted,
+                "pages_found": len(last_target_urls),
+                "pages_extracted": total_pages_extracted,
                 "records": len(all_data),
                 "files": len(all_files),
             },

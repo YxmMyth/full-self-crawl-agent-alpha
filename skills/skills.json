@@ -10,6 +10,16 @@
     "tags": ["code-editor", "codepen", "init-data", "complete"]
   },
   {
+    "id": "codepen-search-explore",
+    "name": "Navigate CodePen search results (React SPA)",
+    "url_pattern": "codepen.io/search/*",
+    "role": "exploration",
+    "description": "CodePen search is a React SPA — pen links are dynamically rendered. After navigate, ALWAYS call analyze_links() to read the live DOM (NOT get_html which only returns the static shell with no pen links). Pen URL pattern: codepen.io/{username}/pen/{slug}. Paginate via ?page=2, ?page=3 (12 results/page). Report pen URLs with report_urls().",
+    "tool": "analyze_links",
+    "verified_count": 1,
+    "tags": ["codepen", "spa", "react", "exploration", "search"]
+  },
+  {
     "id": "codepen-export-zip",
     "name": "Download CodePen pen as ZIP (complete source with formatting)",
     "url_pattern": "codepen.io/*/pen/*",

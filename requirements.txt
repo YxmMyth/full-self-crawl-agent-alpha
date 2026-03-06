@@ -1,5 +1,7 @@
 # Core
-rebrowser-playwright>=1.49.0
+# rebrowser-playwright removed: using Camoufox (C++-level fingerprint injection)
+# which connects via standard playwright WS protocol. rebrowser patches only needed
+# for local Chromium CDP, and they lag behind playwright versions causing WS mismatches.
 beautifulsoup4>=4.12.0
 httpx>=0.25.0
 aiohttp>=3.9.0
