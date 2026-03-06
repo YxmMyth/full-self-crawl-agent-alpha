@@ -560,6 +560,8 @@ class Orchestrator:
 
         all_data = []
         all_files = []
+        # Deduplication: track content fingerprints (title + first 100 chars of js_code)
+        _seen_fingerprints: set[str] = set()
 
         # Seed seen_urls with the start URL
         self._seen_urls.add(url)
@@ -577,7 +579,7 @@ class Orchestrator:
             # --- Phase 1: Exploration ---
             logger.info(f"Phase 1: Exploring {url} (round {_explore_round + 1})")
             explore_governor = Governor(
-                max_steps=50, max_llm_calls=30, max_time_seconds=300,
+                max_steps=50, max_llm_calls=50, max_time_seconds=300,
                 monitor=RiskMonitor(),
             )
             explore_context = ContextManager(max_history_steps=3)
@@ -605,7 +607,11 @@ class Orchestrator:
             # Preserve Phase 1 records (exploration may collect metadata)
             phase1_data = explore_result.get("data", [])
             if phase1_data:
-                all_data.extend(phase1_data)
+                for r in phase1_data:
+                    fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
+                    if fp not in _seen_fingerprints:
+                        _seen_fingerprints.add(fp)
+                        all_data.append(r)
                 logger.info(f"Phase 1 collected {len(phase1_data)} records")
 
             # If exploration found no links, try the start URL itself
@@ -665,6 +671,14 @@ class Orchestrator:
                 result = await extract_controller.run(extract_task)
                 page_data = result.get("data", [])
                 page_files = result.get("files", [])
+                # Deduplicate: skip records with same title+js_code fingerprint
+                new_records = []
+                for r in page_data:
+                    fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
+                    if fp not in _seen_fingerprints:
+                        _seen_fingerprints.add(fp)
+                        new_records.append(r)
+                page_data = new_records
                 all_data.extend(page_data)
                 all_files.extend(page_files)
                 pages_extracted += 1

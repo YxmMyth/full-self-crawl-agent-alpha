@@ -97,8 +97,14 @@ async def main():
         await db.complete_run(run_id, result.get("success", False), len(records))
         await db.close()
 
-        # Save output
+        # Save output — use ARTIFACTS_DIR parent as base when path is relative,
+        # so the file persists in the mounted agent-output volume.
+        import os
         output_path = Path(args.output)
+        if not output_path.is_absolute():
+            artifacts_base = os.environ.get("ARTIFACTS_DIR", "")
+            if artifacts_base:
+                output_path = Path(artifacts_base).parent / output_path
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(result, f, indent=2, ensure_ascii=False, default=str)
 

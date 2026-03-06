@@ -134,10 +134,15 @@ class Governor:
         # Budget warning (>70%)
         if self._llm_calls > 0:
             usage_pct = self._llm_calls / self.max_llm_calls
-            if usage_pct >= 0.7:
+            if usage_pct >= 0.8:
                 nudges.append(
                     f"⚠️ Budget: {self._llm_calls}/{self.max_llm_calls} LLM calls used "
-                    f"({usage_pct:.0%}). Wrap up soon."
+                    f"({usage_pct:.0%}). STOP exploring and call report_urls() NOW with all URLs found so far."
+                )
+            elif usage_pct >= 0.7:
+                nudges.append(
+                    f"⚠️ Budget: {self._llm_calls}/{self.max_llm_calls} LLM calls used "
+                    f"({usage_pct:.0%}). Wrap up: call report_urls() or js_extract_save() soon."
                 )
 
         # Time warning (>70%)

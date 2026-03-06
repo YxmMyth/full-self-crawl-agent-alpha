@@ -81,9 +81,14 @@ class CompletionGate:
         if not field_names:
             return 1.0 if data else 0.0
 
+        _EMPTY = {"n/a", "none", "null", "undefined", "", "unknown", "na"}
+
         total_score = 0.0
         for record in data:
-            filled = sum(1 for f in field_names if record.get(f))
+            filled = sum(
+                1 for f in field_names
+                if str(record.get(f, "")).strip().lower() not in _EMPTY
+            )
             total_score += filled / len(field_names)
 
         return total_score / len(data)
