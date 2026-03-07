@@ -101,11 +101,15 @@ class Orchestrator:
             self._artifacts = ArtifactManager()
             self._artifacts.init_run()
 
-            # 2. Build or infer spec
-            spec = await self._build_spec(start_url, requirement, spec_dict)
+            # 2. Build spec + run Phase 0 discovery in parallel (no LLM needed for Phase 0)
+            from urllib.parse import urlparse as _urlparse
+            _domain = _urlparse(start_url).netloc
+            spec, site_intel = await self._init_parallel(
+                start_url, requirement, spec_dict, _domain
+            )
 
-            # 3. Register tools
-            tools = self._build_tools()
+            # 3. Register tools (domain passed for search_site + probe_endpoint)
+            tools = self._build_tools(domain=_domain)
 
             # 4. Initialize state
             from .state import StateManager
@@ -117,7 +121,8 @@ class Orchestrator:
             if mode == "single_page":
                 result = await self._run_single_page(start_url, spec, tools, task_id)
             else:
-                result = await self._run_full_site(start_url, spec, tools, task_id)
+                result = await self._run_full_site(start_url, spec, tools, task_id,
+                                                   site_intel=site_intel)
 
             # 6. Update state
             status = "completed" if result.get("success") else "failed"
@@ -164,8 +169,12 @@ class Orchestrator:
         self._browser = BrowserTool()
         await self._browser.start()
 
-    def _build_tools(self):
-        """Register all 20 tools into a ToolRegistry."""
+    def _build_tools(self, domain: str = ""):
+        """Register all tools into a ToolRegistry.
+
+        Args:
+            domain: Target domain for domain-locked tools (search_site, probe_endpoint).
+        """
         from ..tools.registry import ToolRegistry
         from ..tools.code_runner import execute_code
         from ..tools.extraction import extract_with_css, intercept_api
@@ -434,95 +443,74 @@ class Orchestrator:
             'Use to assess file quality before deciding if it is a good sample.',
             {"type": "object", "properties": {"filename": {"type": "string", "description": "Name of the file in artifacts/files/ to inspect"}}, "required": ["filename"]})
 
+        # --- Discovery tools: domain-locked, Phase 1 agent use ---
+        if domain:
+            from ..tools.search_tool import SearchSiteTool
+            from ..tools.probe_tool import ProbeEndpointTool
+            _search_tool = SearchSiteTool(domain)
+            _probe_tool = ProbeEndpointTool(domain)
+            registry.register(
+                "search_site",
+                _search_tool.run,
+                f"Search within {domain} using a natural language query. "
+                f"Calls site:{domain} {{query}} via DuckDuckGo. "
+                "Returns {results: [{url, title, snippet}], total}. "
+                "Use when you want to find content pages matching a specific topic. "
+                "Can call multiple times with different keywords to refine discovery. "
+                "IMPORTANT: Only searches within the target domain — cannot search outside.",
+                {"type": "object",
+                 "properties": {
+                     "query": {"type": "string", "description": "Search query (domain prefix added automatically)"},
+                     "max_results": {"type": "integer", "description": "Max results to return (default 10)"},
+                 },
+                 "required": ["query"]},
+            )
+            registry.register(
+                "probe_endpoint",
+                _probe_tool.run,
+                f"Quick HTTP HEAD check to test if a URL path exists on {domain}. "
+                "Returns {url, exists: bool, status: int}. "
+                "Use to verify a hypothesis (e.g. does /topics/threejs exist?) "
+                "before spending browser time navigating there. "
+                "Much faster than navigate() — no page rendering needed.",
+                {"type": "object",
+                 "properties": {
+                     "path": {"type": "string", "description": "URL path to probe, e.g. '/search' or '/topics/threejs'"},
+                 },
+                 "required": ["path"]},
+            )
+
         self._tools = registry
         return registry
 
-    async def _site_recon(self, url: str) -> dict:
-        """Pre-exploration: fetch robots.txt + sitemap for site intelligence.
+    async def _phase0_discover_legacy(self, url: str) -> dict:
+        """Kept for reference only. Replaced by _phase0_discover + discovery.engine."""
+        return {"robots_txt": "", "sitemap_candidates": [], "sitemap_found": False}
 
-        Returns a dict with:
-          - robots_txt: str (content or "" if blocked/missing)
-          - sitemap_candidates: list[str] (filtered detail-page URLs from sitemap)
-          - sitemap_found: bool
+    async def _phase0_discover(self, domain: str, requirement: str):
+        """Phase 0: multi-signal domain discovery. Non-LLM, runs in ~3s.
 
-        This is a best-effort operation — failures are non-fatal.
-        For CF-protected sites, robots.txt may be inaccessible; that's OK.
+        Returns SiteIntelligence with entry_points, direct_content, live_endpoints,
+        sitemap_sample, robots_txt. Passed to Phase 1 agent as initial briefing.
         """
-        import re
+        from ..discovery.engine import discover
         from urllib.parse import urlparse
+        # Strip port if present to get clean domain
+        netloc = domain.split(":")[0]
+        return await discover(netloc, requirement, browser=self._browser)
 
-        parsed = urlparse(url)
-        base = f"{parsed.scheme}://{parsed.netloc}"
-        recon: dict = {"robots_txt": "", "sitemap_candidates": [], "sitemap_found": False}
+    async def _init_parallel(self, url: str, requirement: str,
+                             spec_dict, domain: str):
+        """Run SpecInferrer and Phase 0 discovery in parallel.
 
-        try:
-            import httpx
-            headers = {
-                "User-Agent": "Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)"
-            }
-            async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-                # 1. robots.txt
-                r = await client.get(f"{base}/robots.txt", headers=headers)
-                robots_txt = r.text if r.status_code == 200 else ""
-                # Reject HTML responses (CF challenge / 404 pages)
-                if robots_txt and robots_txt.strip().startswith("<"):
-                    robots_txt = ""
-                recon["robots_txt"] = robots_txt
+        Returns (spec, site_intel). Both are ready when Phase 1 starts.
+        """
+        import asyncio
+        spec_task = self._build_spec(url, requirement, spec_dict)
+        discover_task = self._phase0_discover(domain, requirement)
+        spec, site_intel = await asyncio.gather(spec_task, discover_task)
+        return spec, site_intel
 
-                # 2. Parse Sitemap directives
-                sitemap_urls = re.findall(
-                    r"^Sitemap:\s*(.+)$", robots_txt, re.MULTILINE | re.IGNORECASE
-                )
-                all_locs: list[str] = []
-                for smap_url in sitemap_urls[:3]:
-                    smap_url = smap_url.strip()
-                    try:
-                        sr = await client.get(smap_url, headers=headers)
-                        if sr.status_code != 200:
-                            continue
-                        locs = re.findall(r"<loc>\s*(.*?)\s*</loc>", sr.text, re.DOTALL)
-                        # Handle sitemap index (nested sitemaps)
-                        if "<sitemapindex" in sr.text:
-                            for nested in locs[:5]:
-                                try:
-                                    nr = await client.get(nested.strip(), headers=headers)
-                                    if nr.status_code == 200:
-                                        nested_locs = re.findall(
-                                            r"<loc>\s*(.*?)\s*</loc>", nr.text, re.DOTALL
-                                        )
-                                        all_locs.extend(nested_locs)
-                                except Exception:
-                                    pass
-                        else:
-                            all_locs.extend(locs)
-                    except Exception:
-                        pass
-
-                # 3. Filter to detail-page candidates (3+ path segments)
-                candidates: list[str] = []
-                base_netloc = parsed.netloc
-                for loc in all_locs:
-                    try:
-                        lp = urlparse(loc.strip())
-                        if lp.netloc and base_netloc not in lp.netloc:
-                            continue
-                        segments = [s for s in lp.path.split("/") if s]
-                        if len(segments) >= 3:
-                            candidates.append(loc.strip())
-                    except Exception:
-                        pass
-                recon["sitemap_candidates"] = candidates[:200]
-                recon["sitemap_found"] = bool(sitemap_urls)
-
-        except Exception as e:
-            logger.debug(f"Site recon non-fatal error: {e}")
-
-        logger.info(
-            f"Site recon: robots={'yes' if recon['robots_txt'] else 'blocked/missing'}, "
-            f"sitemap_found={recon['sitemap_found']}, "
-            f"candidates={len(recon['sitemap_candidates'])}"
-        )
-        return recon
 
     async def _build_spec(self, url: str, requirement: str,
                           spec_dict: dict | None):
@@ -539,7 +527,8 @@ class Orchestrator:
         # Minimal spec
         return CrawlSpec(url=url, requirement="Extract main content from this page")
 
-    async def _run_full_site(self, url: str, spec, tools, task_id: str) -> dict:
+    async def _run_full_site(self, url: str, spec, tools, task_id: str,
+                             site_intel=None) -> dict:
         """Full site mode: exploration → extraction → optional re-exploration.
 
         Implements a macro agent loop:
@@ -566,9 +555,6 @@ class Orchestrator:
         # Seed seen_urls with the start URL
         self._seen_urls.add(url)
 
-        # Pre-exploration: robots.txt + sitemap reconnaissance (deterministic, best-effort)
-        site_recon = await self._site_recon(url)
-
         # Accumulated cross-page context — grows throughout the run, never replaced
         experience_log: list[str] = []
         exploration_feedback: dict | None = None
@@ -588,7 +574,7 @@ class Orchestrator:
                 "url": url,
                 "spec": spec,
                 "role": "exploration",
-                "site_recon": site_recon,
+                "site_intel": site_intel,
             }
             if exploration_feedback:
                 explore_task["feedback"] = exploration_feedback
@@ -624,6 +610,15 @@ class Orchestrator:
             from .scheduler import CrawlFrontier
             frontier = CrawlFrontier(max_depth=1, max_urls=50)
             frontier.set_base_domain(url)
+
+            # Phase 0 direct_content: search-validated pages, highest priority
+            if site_intel and site_intel.direct_content:
+                priority_urls = [{"url": u.url, "category": "detail"}
+                                 for u in site_intel.direct_content]
+                frontier.add_batch(priority_urls, depth=0, parent_url=url)
+                logger.info(f"Phase 2: pre-seeded {len(priority_urls)} Phase 0 direct_content URLs")
+
+            # Phase 1 report_urls() discoveries
             frontier.add_batch(
                 [{"url": u, "category": "detail"} for u in target_urls],
                 depth=0, parent_url=url,

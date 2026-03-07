@@ -71,32 +71,38 @@ class ContextManager:
 
 Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code. That is your only output — do not extract data content, never fabricate URLs.
 
-Before navigating, reason about what you already know:
-- Skill library (see above): if a verified URL pattern exists for this site, use it directly
-- Task hints: do they describe the URL structure or listing pages?
+## Strategy: macro → micro
 
-If you don't yet know the URL structure, discover it first — choose the approach that fits:
-- bash: curl robots.txt to find a sitemap → fetch it to see URL patterns and scale instantly
-- navigate + analyze_links(): see categorized links directly from the rendered page
-- Both are valid; use whichever gives you the information faster
+Start with the biggest picture first, then narrow down:
+1. Read your Site Intelligence briefing (below) — it's pre-fetched reconnaissance, not instructions
+2. Reason: what do the entry_points, live_endpoints, and sitemap_sample tell you about this site?
+3. If the briefing is incomplete, use your tools to fill gaps:
+   - search_site(query) — search within the domain. Call multiple times with different keywords
+   - probe_endpoint(path) — HTTP HEAD check: does /topics/threejs exist? (fast, no browser)
+   - navigate + analyze_links() — see what's actually rendered
+   - bash — curl REST APIs, fetch sitemaps, hit JSON endpoints
 
-Reading navigate() results — act on these signals immediately:
-1. hint contains "SPA loaded" or "network still active" → page IS loaded but rendering. Call analyze_links() RIGHT NOW. Do NOT navigate again — navigating resets the SPA render cycle.
-2. element_count < 20 → page empty/blocked. May retry or try bash curl.
-3. strategy = "networkidle" → fully rendered. Use analyze_links() or get_html().
+## Tools decision guide
 
-If analyze_links() and evaluate_js() both return no target URLs:
-- Try bash to hit a REST API or sitemap instead of the browser SPA
-- Try paginating (add ?page=2) or a different listing URL
-- If truly nothing found after 3 different approaches, report_urls([]) with a summary explaining why
+- search_site: best for finding content when you know what you're looking for
+  → Can call multiple times! If first keywords miss, try different terms
+- probe_endpoint: validate a hypothesis cheaply before navigating
+  → "Does /tag/threejs exist?" → probe first, then navigate if it does
+- analyze_links(): for SPA pages where JS renders the links
+- bash: for REST APIs, non-browser accessible data
 
-Once you have candidate URLs, judge before reporting:
-- Do they match the "detail" category pattern (3+ path segments, e.g. /user/name/slug)?
-- Does the URL pattern match what the task is asking for?
+## Reading navigate() results
 
-Do NOT call save_records() during exploration.
+1. hint "SPA loaded" or "network still active" → call analyze_links() RIGHT NOW (don't re-navigate)
+2. element_count < 20 → page empty/blocked → try bash or different URL
+3. strategy "networkidle" → fully rendered → analyze_links() or get_html()
 
-When done, summarize: how many target URLs found and what kind of pages they are."""
+## When to stop
+
+Once you have enough target URLs, call report_urls([...]) inside execute_code. Don't navigate every URL — just collect the list.
+If truly nothing found after 3+ different approaches, report_urls([]) with summary.
+
+Do NOT call save_records() during exploration."""
 
             feedback = task.get("feedback")
             if feedback:
@@ -243,25 +249,35 @@ Rules:
             except Exception:
                 pass  # Skill library is optional; never block execution
 
-        # Site reconnaissance: robots.txt excerpt and sitemap candidates (if available)
-        site_recon = task.get("site_recon")
-        if site_recon:
-            recon_lines = []
-            robots_txt = site_recon.get("robots_txt", "")
-            if robots_txt:
-                recon_lines.append(f"\nSite robots.txt (fetched before your session):\n{robots_txt[:500]}")
-            sitemap_candidates = site_recon.get("sitemap_candidates", [])
-            if sitemap_candidates:
-                recon_lines.append(
-                    f"\nSitemap pre-loaded {len(sitemap_candidates)} candidate URLs matching this task."
-                    f" Sample: {sitemap_candidates[:5]}"
+        # Site intelligence: Phase 0 multi-signal discovery results (if available)
+        site_intel = task.get("site_intel")
+        if site_intel:
+            intel_lines = ["\n## Site Intelligence (pre-fetched before your session)"]
+            if site_intel.entry_points:
+                ep_urls = [u.url for u in site_intel.entry_points[:8]]
+                intel_lines.append(
+                    f"Likely entry/listing pages ({len(site_intel.entry_points)} found): {ep_urls}"
                 )
-                recon_lines.append(
-                    "If these match the target pattern, report them with report_urls() directly"
-                    " — no need to navigate to every one."
+            if site_intel.direct_content:
+                dc_urls = [u.url for u in site_intel.direct_content[:5]]
+                intel_lines.append(
+                    f"Search-validated content pages ({len(site_intel.direct_content)} found): {dc_urls}"
+                    " — these may already have the data you need"
                 )
-            if recon_lines:
-                parts.extend(recon_lines)
+            if site_intel.live_endpoints:
+                intel_lines.append(f"Confirmed live endpoints (HTTP): {site_intel.live_endpoints}")
+            if site_intel.sitemap_sample:
+                intel_lines.append(f"Sitemap URL sample: {site_intel.sitemap_sample[:8]}")
+            if site_intel.robots_txt:
+                intel_lines.append(
+                    f"robots.txt excerpt:\n{site_intel.robots_txt[:300]}"
+                )
+            intel_lines.append(
+                "This is a briefing — use it as a starting point, not as instructions. "
+                "You may search_site() with different keywords, probe_endpoint() new paths, "
+                "or navigate elsewhere if the data requires it."
+            )
+            parts.extend(intel_lines)
 
         # Prior experience from previous pages
         prior = task.get("prior_experience")
