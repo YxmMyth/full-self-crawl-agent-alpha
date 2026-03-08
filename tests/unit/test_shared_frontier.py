@@ -226,7 +226,8 @@ class TestSeedFromIntel:
         f = SharedFrontier()
         f.seed_from_intel(FakeIntel(), "https://example.com")
         assert f._records["https://example.com/pen/abc"].priority == 2.5
-        assert f._records["https://example.com/trending"].priority == 1.5
+        # entry_points are NOT seeded — they belong to Explorer's site_intel context
+        assert "https://example.com/trending" not in f._records
         assert f._records["https://example.com"].priority == 1.0
 
 
@@ -250,3 +251,64 @@ class TestGetFailureSummary:
         f.mark_extracted("https://example.com/a", records_count=0)
         summary = f.get_failure_summary()
         assert "https://example.com/a" in summary
+
+
+class TestSpecAwareValidation:
+    """Test _is_substantive and spec-driven record filtering in _ingest_data."""
+
+    def _make_spec(self, field_names: list[str]):
+        class FakeSpec:
+            target_fields = [{"name": f} for f in field_names]
+        return FakeSpec()
+
+    def test_na_record_rejected_when_all_target_fields_are_placeholder(self):
+        spec = self._make_spec(["title", "url", "js_code"])
+        f = SharedFrontier(spec=spec)
+        f.add("https://example.com/a")
+        f.mark_extracted("https://example.com/a", records_count=1,
+                         new_data=[{"title": "N/A", "url": "N/A", "js_code": "N/A"}])
+        assert len(f.all_data()) == 0
+
+    def test_record_with_one_real_field_accepted(self):
+        spec = self._make_spec(["title", "js_code"])
+        f = SharedFrontier(spec=spec)
+        f.add("https://example.com/a")
+        # title is real, js_code is empty (normal for CSS-only pens)
+        f.mark_extracted("https://example.com/a", records_count=1,
+                         new_data=[{"title": "My Pen", "js_code": ""}])
+        assert len(f.all_data()) == 1
+
+    def test_empty_string_and_none_variants_all_rejected(self):
+        spec = self._make_spec(["title"])
+        f = SharedFrontier(spec=spec)
+        for i, title_val in enumerate(["", "null", "none", "undefined", "unknown"]):
+            url = f"https://example.com/{i}"
+            f.add(url)
+            f.mark_extracted(url, records_count=1, new_data=[{"title": title_val}])
+        assert len(f.all_data()) == 0
+
+    def test_no_spec_accepts_all_records(self):
+        f = SharedFrontier()  # no spec
+        f.add("https://example.com/a")
+        f.mark_extracted("https://example.com/a", records_count=1,
+                         new_data=[{"title": "N/A", "url": "N/A"}])
+        assert len(f.all_data()) == 1  # no spec → accept anything non-empty
+
+    def test_is_substantive_true_for_real_content(self):
+        assert SharedFrontier._is_substantive(
+            {"title": "Three.js demo", "js_code": "new THREE.Scene()"},
+            ["title", "js_code"]
+        ) is True
+
+    def test_is_substantive_false_when_all_empty(self):
+        assert SharedFrontier._is_substantive(
+            {"title": "N/A", "js_code": "null"},
+            ["title", "js_code"]
+        ) is False
+
+    def test_is_substantive_true_when_one_field_real(self):
+        # Empty CSS is fine — js_code has content
+        assert SharedFrontier._is_substantive(
+            {"title": "", "js_code": "console.log('hi')", "css": ""},
+            ["title", "js_code", "css"]
+        ) is True

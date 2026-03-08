@@ -173,25 +173,27 @@ class SharedFrontier:
     Quality signals drive re-exploration decisions.
     """
 
-    def __init__(self, max_urls: int = 300):
+    def __init__(self, max_urls: int = 300, spec=None):
         self._records: dict[str, URLRecord] = {}
         self._all_data: list[dict] = []
         self._seen_fingerprints: set[str] = set()
         self._max_urls = max_urls
         self._consecutive_failures = 0
         self._total_extracted = 0
+        self._spec = spec  # CrawlSpec for spec-aware validation
 
     def seed_from_intel(self, site_intel, start_url: str) -> int:
-        """Pre-populate from Phase 0 SiteIntelligence + start URL."""
+        """Pre-populate from Phase 0 SiteIntelligence + start URL.
+
+        Only seeds direct_content (search-validated content pages) into the
+        extraction queue. entry_points (listing/search pages) are intentionally
+        excluded — the Explorer navigates them via site_intel context to discover
+        more content URLs.
+        """
         added = 0
         if site_intel and site_intel.direct_content:
             for scored in site_intel.direct_content:
                 if self.add(scored.url, priority=2.5, discovered_by="phase0_search"):
-                    added += 1
-        if site_intel and site_intel.entry_points:
-            for scored in site_intel.entry_points:
-                if self.add(scored.url, priority=1.5, url_type="listing",
-                            discovered_by="phase0_sitemap"):
                     added += 1
         self.add(start_url, priority=1.0, discovered_by="seed")
         return added
@@ -317,9 +319,35 @@ class SharedFrontier:
             "consecutive_failures": self._consecutive_failures,
         }
 
+    @staticmethod
+    def _is_substantive(record: dict, target_fields: list[str]) -> bool:
+        """True if at least one target field has real, non-placeholder content.
+
+        Empty CSS/HTML are normal (e.g. CodePen pens with no styling) — this
+        check only requires *some* target field to be filled, not all of them.
+        Driven by spec.target_fields, not domain-specific hardcoding.
+        """
+        _EMPTY = {"", "n/a", "none", "null", "undefined", "unknown", "na"}
+        return any(
+            str(record.get(f, "")).strip().lower() not in _EMPTY
+            for f in target_fields
+        )
+
     def _ingest_data(self, data: list[dict]) -> None:
+        """Ingest records into all_data with dedup and spec-aware validation."""
+        target_fields: list[str] = []
+        if self._spec and self._spec.target_fields:
+            target_fields = [
+                f["name"] for f in self._spec.target_fields if isinstance(f, dict)
+            ]
+
         for r in data:
             if not isinstance(r, dict):
+                continue
+            # Reject records with no substantive content across any target field.
+            # With no spec (target_fields empty), accept all non-empty records.
+            if target_fields and not self._is_substantive(r, target_fields):
+                logger.debug("Dropping record: no substantive content in target fields")
                 continue
             fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
             if fp not in self._seen_fingerprints:

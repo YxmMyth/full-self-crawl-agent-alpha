@@ -553,7 +553,7 @@ class Orchestrator:
         self._seen_urls.add(url)
 
         # Create SharedFrontier and pre-seed from Phase 0
-        frontier = SharedFrontier(max_urls=300)
+        frontier = SharedFrontier(max_urls=300, spec=spec)
         seeded = frontier.seed_from_intel(site_intel, url)
         logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
@@ -582,18 +582,15 @@ class Orchestrator:
             added = frontier.add_batch(discovered, discovered_by="explorer")
             logger.info(f"Explorer finished: {len(discovered)} URLs reported, {added} new in frontier")
 
-            # Mark URLs where Explorer sampled as SAMPLED (Phase 2 skips)
+            # Mark URLs where Explorer sampled as SAMPLED (Phase 2 skips them).
+            # Phase 1 data is NOT ingested into all_data — exploration samples
+            # are validation signals only. Phase 2 extracts all QUEUED content
+            # URLs for final output.
             sampled = explore_result.get("sampled_urls", set())
-            sampled_data = explore_result.get("data", [])
             for s_url in sampled:
-                frontier.mark_sampled(s_url, records_count=1,
-                                      new_data=sampled_data if s_url else None)
+                frontier.mark_sampled(s_url, records_count=1)
             if sampled:
                 logger.info(f"Explorer sampled {len(sampled)} URLs — Phase 2 will skip them")
-
-            # Preserve any Phase 1 records not tracked via sampled_urls
-            for r in sampled_data:
-                frontier._ingest_data([r])
 
         # Phase 1: initial exploration
         await _run_explorer()
