@@ -617,11 +617,21 @@ class Orchestrator:
                 gate=CompletionGate(), monitor=RiskMonitor(),
             )
             extract_context = ContextManager(max_history_steps=3)
+            # Build compact site context from Phase 0 intel — gives agent
+            # factual URL patterns to reason from, without classification rules.
+            site_ctx_lines = []
+            if site_intel:
+                if site_intel.entry_points:
+                    ep_urls = [u.url for u in site_intel.entry_points[:5]]
+                    site_ctx_lines.append(f"Collection/listing pages found: {ep_urls}")
+                if site_intel.direct_content:
+                    dc_urls = [u.url for u in site_intel.direct_content[:5]]
+                    site_ctx_lines.append(f"Verified content pages found: {dc_urls}")
             extract_task = {
                 "url": url_record.url,
                 "spec": spec,
                 "role": "extraction",
-                "site_context": "",
+                "site_context": "\n".join(site_ctx_lines),
                 "prior_experience": prior_experience,
             }
             extract_controller = CrawlController(
@@ -633,6 +643,15 @@ class Orchestrator:
             page_files = result.get("files", [])
             all_files.extend(page_files)
             total_pages_extracted += 1
+
+            # Feed any URLs the extractor discovered back into the frontier.
+            # This enables goal-directed traversal: agent navigates into a
+            # collection/hub page, reports the actual content URLs, and the
+            # system picks them up — no classification needed.
+            new_urls = result.get("new_links", [])
+            if new_urls:
+                added = frontier.add_batch(new_urls, discovered_by="extractor")
+                logger.info(f"Extractor reported {len(new_urls)} URLs, {added} new in frontier")
 
             # Write to frontier
             frontier.mark_extracted(url_record.url, len(page_data), new_data=page_data)

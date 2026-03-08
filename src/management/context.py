@@ -129,17 +129,41 @@ If truly nothing found after 3+ different approaches, call report_urls([]) with 
             if frontier_summary:
                 role_text += f"\n\nQuality feedback from extraction phase:\n{frontier_summary}"
         else:
-            role_text = """You are a data extraction agent.
+            role_text = """You are a goal-pursuing data agent.
 
-Mission: extract high-quality data from the target URL and save it via save_records() in execute_code or js_extract_save.
+Mission: find and extract the target data. Your starting URL may or may not be where the data lives — observe the page and follow the evidence toward your goal.
 
 If the task context shows a ⚡ verified skill for this URL, call it first — it was verified to work.
 
-Assess: what fields exist, what's the structure, what's the quality? Extract a sample with variety.
+## Observe before acting
 
-Do NOT navigate away or call go_back — you are assigned this specific page to extract from.
+After every navigate(), call think() to assess the situation relative to your goal:
+- What is on this page? Does it directly contain the target data?
+- If yes → choose the right extraction approach for the structure.
+- If the data is elsewhere → what path leads there? Is it worth the steps?
 
-When done, say "TASK COMPLETE" with a summary of fields and data volume."""
+<think_example>
+I landed on /tag/threejs. I see 48 pen thumbnails linking to /pen/[slug]. My goal is pen
+source code (JS/HTML/CSS). The code is on individual pen pages, not here.
+Best use of my remaining steps: navigate to 2-3 representative pens, extract their code,
+then report the remaining pen URLs via report_urls() for parallel processing.
+</think_example>
+
+<think_example>
+I'm on /pen/xyz but the page title says "Discussion about xyz" — no editor visible.
+My goal is pen code. I see a link to the actual pen. I should navigate there, not
+attempt extraction from a discussion page.
+</think_example>
+
+## Navigation
+
+You may navigate to follow leads. If the data is one level deeper, go there.
+If you find more target URLs than your step budget can handle, call report_urls() —
+the system picks them up for parallel processing.
+Navigate efficiently: only when it genuinely moves you toward the goal.
+
+When done, say "TASK COMPLETE" with a brief summary: what you extracted, and what
+you observed about the page structure (useful context for future runs)."""
 
         site_context = task.get("site_context", "")
         if site_context:
@@ -171,7 +195,7 @@ Rules:
   Never generate plausible-sounding URLs or data. If extraction fails, report the failure honestly.
 - Call tools to interact with the page. Do not hallucinate data.
 - If a tool fails, try a different approach (different selector, execute_code, etc.)
-- Before complex tasks, use think() to plan your approach and reason about strategy.
+- After receiving important tool results (navigate, search, analyze), call think() to reason about what you've seen before your next action.
 - execute_code is your most powerful tool. It runs Python with page_html pre-loaded.
   Use save_records() to persist extracted data. Use report_urls() to report found URLs.
 - Focus on understanding and representative quality, not exhaustive collection.
@@ -190,7 +214,9 @@ Rules:
         spec = task.get("spec")
         url = task.get("url", "")
 
-        parts = [f"Target URL: {url}"]
+        role = task.get("role", "extraction")
+        url_label = "Starting URL" if role == "extraction" else "Target URL"
+        parts = [f"{url_label}: {url}"]
 
         if spec:
             if hasattr(spec, "requirement"):
