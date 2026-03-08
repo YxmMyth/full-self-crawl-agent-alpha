@@ -1,14 +1,15 @@
 """
 Management: Scheduler — URL frontier for multi-page crawling.
 
-Manages the queue of URLs to visit, with priority, depth tracking,
-and duplicate filtering.
+Two frontier classes:
+- CrawlFrontier: simple priority queue for single_page mode (unchanged)
+- SharedFrontier: full-run state machine shared between Explorer and Extractor
 """
 
 import logging
-from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
+from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
@@ -122,3 +123,205 @@ class CrawlFrontier:
             "max_depth": self.max_depth,
             "base_domain": self._base_domain,
         }
+
+
+# ---------------------------------------------------------------------------
+# SharedFrontier — full-run URL state machine (Explorer + Extractor share it)
+# ---------------------------------------------------------------------------
+
+class URLStatus(Enum):
+    QUEUED     = "queued"      # ready to be extracted
+    IN_FLIGHT  = "in_flight"   # currently being processed
+    SAMPLED    = "sampled"     # Explorer extracted 1 record (Phase 2 skips)
+    EXTRACTED  = "extracted"   # fully extracted
+    FAILED     = "failed"      # extraction failed or yielded nothing
+
+
+@dataclass
+class URLRecord:
+    url: str
+    status: URLStatus = URLStatus.QUEUED
+    url_type: str = "content"       # "content" | "listing"
+    priority: float = 1.0
+    records_count: int = 0
+    failure_reason: str = ""
+    discovered_by: str = "explorer" # "phase0_search" | "phase0_sitemap" | "explorer" | "seed"
+    extraction_hint: str = ""
+
+
+@dataclass
+class QualitySignals:
+    consecutive_failures: int = 0
+    total_extracted: int = 0
+    total_failed: int = 0
+    empty_rate: float = 0.0
+
+    def needs_reexplore(self) -> bool:
+        """True when extraction results are poor enough to warrant more exploration."""
+        return (
+            self.consecutive_failures >= 3
+            or (self.total_extracted >= 5 and self.empty_rate > 0.6)
+        )
+
+
+class SharedFrontier:
+    """URL state machine shared between Explorer (Phase 1) and Extractor (Phase 2).
+
+    Explorer writes discovered URLs via add()/add_batch().
+    Orchestrator drives extraction via next()/mark_extracted()/mark_failed().
+    Explorer can mark URLs SAMPLED when it extracts a validation record.
+    Quality signals drive re-exploration decisions.
+    """
+
+    def __init__(self, max_urls: int = 300):
+        self._records: dict[str, URLRecord] = {}
+        self._all_data: list[dict] = []
+        self._seen_fingerprints: set[str] = set()
+        self._max_urls = max_urls
+        self._consecutive_failures = 0
+        self._total_extracted = 0
+
+    def seed_from_intel(self, site_intel, start_url: str) -> int:
+        """Pre-populate from Phase 0 SiteIntelligence + start URL."""
+        added = 0
+        if site_intel and site_intel.direct_content:
+            for scored in site_intel.direct_content:
+                if self.add(scored.url, priority=2.5, discovered_by="phase0_search"):
+                    added += 1
+        if site_intel and site_intel.entry_points:
+            for scored in site_intel.entry_points:
+                if self.add(scored.url, priority=1.5, url_type="listing",
+                            discovered_by="phase0_sitemap"):
+                    added += 1
+        self.add(start_url, priority=1.0, discovered_by="seed")
+        return added
+
+    def add(self, url: str, priority: float = 1.0, url_type: str = "content",
+            discovered_by: str = "explorer", extraction_hint: str = "") -> bool:
+        """Add URL. Returns False if duplicate or at capacity."""
+        url = url.split("#")[0].rstrip("/")
+        if not url or url in self._records:
+            return False
+        if len(self._records) >= self._max_urls:
+            return False
+        self._records[url] = URLRecord(
+            url=url, status=URLStatus.QUEUED, url_type=url_type,
+            priority=priority, discovered_by=discovered_by,
+            extraction_hint=extraction_hint,
+        )
+        return True
+
+    def add_batch(self, urls: list, priority: float = 1.0,
+                  discovered_by: str = "explorer") -> int:
+        """Add multiple URLs. Each item can be str or dict with 'url' key."""
+        added = 0
+        for item in urls:
+            if isinstance(item, dict):
+                url = item.get("url", "")
+                p = item.get("priority", priority)
+                hint = item.get("hint", "")
+            else:
+                url = str(item)
+                p = priority
+                hint = ""
+            if url and self.add(url, priority=p, discovered_by=discovered_by,
+                                extraction_hint=hint):
+                added += 1
+        return added
+
+    def next(self) -> URLRecord | None:
+        """Return highest-priority QUEUED URL, or None if frontier exhausted."""
+        candidates = [r for r in self._records.values() if r.status == URLStatus.QUEUED]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda r: r.priority)
+
+    def mark_in_flight(self, url: str) -> None:
+        url = url.split("#")[0].rstrip("/")
+        if url in self._records:
+            self._records[url].status = URLStatus.IN_FLIGHT
+
+    def mark_extracted(self, url: str, records_count: int,
+                       new_data: list[dict] | None = None) -> None:
+        """Mark URL as fully extracted. Appends deduplicated records to all_data."""
+        url = url.split("#")[0].rstrip("/")
+        if url not in self._records:
+            self.add(url, discovered_by="extractor")
+        rec = self._records[url]
+        rec.status = URLStatus.EXTRACTED
+        rec.records_count = records_count
+        self._total_extracted += 1
+        self._consecutive_failures = 0 if records_count > 0 else self._consecutive_failures + 1
+        if new_data:
+            self._ingest_data(new_data)
+
+    def mark_sampled(self, url: str, records_count: int = 1,
+                     new_data: list[dict] | None = None) -> None:
+        """Explorer extracted a validation sample — Phase 2 will skip this URL."""
+        url = url.split("#")[0].rstrip("/")
+        if url not in self._records:
+            self.add(url, discovered_by="explorer")
+        rec = self._records[url]
+        rec.status = URLStatus.SAMPLED
+        rec.records_count = records_count
+        if new_data:
+            self._ingest_data(new_data)
+
+    def mark_failed(self, url: str, reason: str = "") -> None:
+        url = url.split("#")[0].rstrip("/")
+        if url not in self._records:
+            self.add(url, discovered_by="extractor")
+        rec = self._records[url]
+        rec.status = URLStatus.FAILED
+        rec.failure_reason = reason
+        self._consecutive_failures += 1
+
+    def quality_signals(self) -> QualitySignals:
+        extracted = [r for r in self._records.values() if r.status == URLStatus.EXTRACTED]
+        failed_count = sum(1 for r in extracted if r.records_count == 0)
+        empty_rate = failed_count / len(extracted) if extracted else 0.0
+        return QualitySignals(
+            consecutive_failures=self._consecutive_failures,
+            total_extracted=self._total_extracted,
+            total_failed=failed_count,
+            empty_rate=empty_rate,
+        )
+
+    def get_failure_summary(self) -> str:
+        """Human-readable summary of failed URLs for Explorer re-exploration context."""
+        failed = [
+            r for r in self._records.values()
+            if r.status == URLStatus.FAILED
+            or (r.status == URLStatus.EXTRACTED and r.records_count == 0)
+        ]
+        if not failed:
+            return ""
+        urls = [r.url for r in failed[:10]]
+        return (
+            f"{len(failed)} URLs yielded no data: {urls}. "
+            "Try different sections, different URL patterns, or listing pages."
+        )
+
+    def all_data(self) -> list[dict]:
+        """All deduplicated extracted records accumulated so far."""
+        return list(self._all_data)
+
+    def stats(self) -> dict:
+        counts: dict[str, int] = {}
+        for r in self._records.values():
+            counts[r.status.value] = counts.get(r.status.value, 0) + 1
+        return {
+            "total_urls": len(self._records),
+            "status_counts": counts,
+            "total_records": len(self._all_data),
+            "consecutive_failures": self._consecutive_failures,
+        }
+
+    def _ingest_data(self, data: list[dict]) -> None:
+        for r in data:
+            if not isinstance(r, dict):
+                continue
+            fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
+            if fp not in self._seen_fingerprints:
+                self._seen_fingerprints.add(fp)
+                self._all_data.append(r)

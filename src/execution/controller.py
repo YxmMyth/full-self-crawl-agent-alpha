@@ -43,6 +43,8 @@ class CrawlController:
         self._collected_data: list[dict] = []
         self._collected_files: list[dict] = []
         self._discovered_urls: list[str] = []
+        self._sampled_urls: set[str] = set()  # URLs where save_records() was called during exploration
+        self._task: dict = {}  # set at run() start
 
     async def run(self, task: dict) -> dict:
         """Execute a crawl task with the LLM-as-Controller loop.
@@ -69,7 +71,8 @@ class CrawlController:
         self.governor.start()
         stop_reason = ""
         summary = ""
-        new_links = self._discovered_urls  # shared reference for side-channel collection
+        new_links = self._discovered_urls
+        self._task = task  # for side-channel access to current_url and role
 
         logger.info(f"Controller starting: {task.get('url', 'unknown')}, role={task.get('role', 'extraction')}")
 
@@ -210,6 +213,7 @@ class CrawlController:
             "stop_reason": stop_reason,
             "summary": summary,
             "new_links": new_links,
+            "sampled_urls": self._sampled_urls,
             "successful_tools": self._extract_successful_tools(),
             "failed_tools": self._extract_failed_tools(),
             "metrics": {
@@ -397,6 +401,11 @@ class CrawlController:
                 self._collected_data.extend(records)
                 data["_saved"] = f"{len(records)} records saved via save_records()"
                 logger.info(f"Side-channel: collected {len(records)} records from execute_code")
+                # Track which URL was sampled during exploration so Phase 2 can skip it
+                if self._task.get("role") == "exploration":
+                    current_url = self._task.get("current_url", "")
+                    if current_url:
+                        self._sampled_urls.add(current_url.split("#")[0].rstrip("/"))
             if urls:
                 new_links.extend(urls)
                 data["_reported"] = f"{len(urls)} URLs reported via report_urls()"

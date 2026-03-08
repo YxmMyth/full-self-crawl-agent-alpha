@@ -529,214 +529,160 @@ class Orchestrator:
 
     async def _run_full_site(self, url: str, spec, tools, task_id: str,
                              site_intel=None) -> dict:
-        """Full site mode: exploration → extraction → optional re-exploration.
+        """Full site mode: SharedFrontier event loop.
 
-        Implements a macro agent loop:
-          explore → extract → quality-check → (re-explore if needed) → done
-
-        Quality gate: 3 consecutive empty pages after at least 3 pages tried
-        → build deterministic feedback dict → re-explore with that context.
-        Max 2 exploration rounds (no infinite loops).
-
-        experience_log accumulates cross-page context across the entire run
-        (Reflexion pattern: reflections accumulate, never replaced).
+        Flow:
+          1. Create SharedFrontier, seed with Phase 0 site_intel
+          2. Run Explorer (Phase 1) — discovers URLs, optionally samples pages
+          3. Loop: extract next URL → mark result → check quality signals
+          4. If quality poor → re-run Explorer with failure context (max 2 rounds)
+          5. Check CompletionGate after each extraction
         """
         from ..execution.controller import CrawlController
         from ..strategy.gate import CompletionGate
         from ..verification.verifier import RiskMonitor
         from .context import ContextManager
         from .governor import Governor
+        from .scheduler import SharedFrontier
 
-        all_data = []
         all_files = []
-        # Deduplication: track content fingerprints (title + first 100 chars of js_code)
-        _seen_fingerprints: set[str] = set()
+        experience_log: list[str] = []
+        total_pages_extracted = 0
 
         # Seed seen_urls with the start URL
         self._seen_urls.add(url)
 
-        # Accumulated cross-page context — grows throughout the run, never replaced
-        experience_log: list[str] = []
-        exploration_feedback: dict | None = None
-        total_pages_extracted = 0
-        last_target_urls: list[str] = [url]
+        # Create SharedFrontier and pre-seed from Phase 0
+        frontier = SharedFrontier(max_urls=300)
+        seeded = frontier.seed_from_intel(site_intel, url)
+        logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
-        for _explore_round in range(2):
-            # --- Phase 1: Exploration ---
-            logger.info(f"Phase 1: Exploring {url} (round {_explore_round + 1})")
+        async def _run_explorer(failure_context: str | None = None) -> None:
+            """Run exploration phase, write discovered URLs into frontier."""
+            logger.info(f"Explorer starting (failure_context={'yes' if failure_context else 'no'})")
             explore_governor = Governor(
                 max_steps=50, max_llm_calls=50, max_time_seconds=300,
                 monitor=RiskMonitor(),
             )
             explore_context = ContextManager(max_history_steps=3)
-
             explore_task: dict = {
-                "url": url,
-                "spec": spec,
-                "role": "exploration",
+                "url": url, "spec": spec, "role": "exploration",
                 "site_intel": site_intel,
             }
-            if exploration_feedback:
-                explore_task["feedback"] = exploration_feedback
-
+            if failure_context:
+                explore_task["frontier_summary"] = failure_context
             explore_controller = CrawlController(
-                llm_client=self._llm,
-                tools=tools,
-                governor=explore_governor,
-                context_mgr=explore_context,
+                llm_client=self._llm, tools=tools,
+                governor=explore_governor, context_mgr=explore_context,
             )
-
             explore_result = await explore_controller.run(explore_task)
-            target_urls = explore_result.get("new_links", [])
-            last_target_urls = target_urls or [url]
 
-            # Preserve Phase 1 records (exploration may collect metadata)
-            phase1_data = explore_result.get("data", [])
-            if phase1_data:
-                for r in phase1_data:
-                    fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
-                    if fp not in _seen_fingerprints:
-                        _seen_fingerprints.add(fp)
-                        all_data.append(r)
-                logger.info(f"Phase 1 collected {len(phase1_data)} records")
+            # Ingest discovered URLs into frontier
+            discovered = explore_result.get("new_links", [])
+            added = frontier.add_batch(discovered, discovered_by="explorer")
+            logger.info(f"Explorer finished: {len(discovered)} URLs reported, {added} new in frontier")
 
-            # If exploration found no links, try the start URL itself
-            if not target_urls:
-                target_urls = [url]
+            # Mark URLs where Explorer sampled as SAMPLED (Phase 2 skips)
+            sampled = explore_result.get("sampled_urls", set())
+            sampled_data = explore_result.get("data", [])
+            for s_url in sampled:
+                frontier.mark_sampled(s_url, records_count=1,
+                                      new_data=sampled_data if s_url else None)
+            if sampled:
+                logger.info(f"Explorer sampled {len(sampled)} URLs — Phase 2 will skip them")
 
-            logger.info(f"Phase 1 complete: found {len(target_urls)} target pages")
+            # Preserve any Phase 1 records not tracked via sampled_urls
+            for r in sampled_data:
+                frontier._ingest_data([r])
 
-            # --- Phase 2: Extraction ---
-            from .scheduler import CrawlFrontier
-            frontier = CrawlFrontier(max_depth=1, max_urls=50)
-            frontier.set_base_domain(url)
+        # Phase 1: initial exploration
+        await _run_explorer()
 
-            # Phase 0 direct_content: search-validated pages, highest priority
-            if site_intel and site_intel.direct_content:
-                priority_urls = [{"url": u.url, "category": "detail"}
-                                 for u in site_intel.direct_content]
-                frontier.add_batch(priority_urls, depth=0, parent_url=url)
-                logger.info(f"Phase 2: pre-seeded {len(priority_urls)} Phase 0 direct_content URLs")
+        reexplore_count = 0
+        prior_experience: str | None = None
 
-            # Phase 1 report_urls() discoveries
-            frontier.add_batch(
-                [{"url": u, "category": "detail"} for u in target_urls],
-                depth=0, parent_url=url,
+        # Event loop: extract URLs from frontier
+        while True:
+            url_record = frontier.next()
+            if url_record is None:
+                logger.info("Frontier exhausted — extraction complete")
+                break
+
+            frontier.mark_in_flight(url_record.url)
+            logger.info(
+                f"Extracting {url_record.url} "
+                f"(priority={url_record.priority:.1f}, by={url_record.discovered_by}) "
+                f"| frontier stats: {frontier.stats()}"
             )
 
-            site_context = explore_result.get("summary", "")
-            pages_extracted = 0
-            prior_experience = "\n---\n".join(experience_log) if experience_log else None
-            zero_record_streak = 0
-            needs_reexplore = False
-            failed_pages_this_round: list[str] = []
+            extract_governor = Governor(
+                max_steps=30, max_llm_calls=30, max_time_seconds=300,
+                gate=CompletionGate(), monitor=RiskMonitor(),
+            )
+            extract_context = ContextManager(max_history_steps=3)
+            extract_task = {
+                "url": url_record.url,
+                "spec": spec,
+                "role": "extraction",
+                "site_context": "",
+                "prior_experience": prior_experience,
+            }
+            extract_controller = CrawlController(
+                llm_client=self._llm, tools=tools,
+                governor=extract_governor, context_mgr=extract_context,
+            )
+            result = await extract_controller.run(extract_task)
+            page_data = result.get("data", [])
+            page_files = result.get("files", [])
+            all_files.extend(page_files)
+            total_pages_extracted += 1
 
-            while True:
-                task_item = frontier.next()
-                if not task_item:
-                    break
+            # Write to frontier
+            frontier.mark_extracted(url_record.url, len(page_data), new_data=page_data)
+            self._state_mgr.record_page_visit(task_id, url_record.url)
+            self._state_mgr.add_data(task_id, page_data)
 
+            # Update experience log
+            successful_tools = result.get("successful_tools", [])
+            failed_tools = result.get("failed_tools", [])
+            stop_reason = result.get("stop_reason", "")
+            metrics = result.get("metrics", {})
+            elapsed = metrics.get("elapsed_seconds", 0)
+            steps = result.get("steps", 0)
+            entry = (
+                f"Page {total_pages_extracted} ({url_record.url}): "
+                f"{len(page_data)} records, {len(frontier.all_data())} total.\n"
+                f"  stop={stop_reason}, {elapsed:.0f}s, {steps} steps\n"
+                f"  code_that_worked={json.dumps(successful_tools[-3:], default=str, ensure_ascii=False)}\n"
+                f"  failed={json.dumps(failed_tools[-3:], default=str, ensure_ascii=False)}\n"
+                f"  sample={json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
+            )
+            experience_log.append(entry)
+            if len(experience_log) > 3:
+                experience_log = experience_log[-3:]
+            prior_experience = "\n---\n".join(experience_log)
+
+            # Quality check → re-explore if needed
+            sigs = frontier.quality_signals()
+            if sigs.needs_reexplore() and reexplore_count < 2:
+                reexplore_count += 1
+                failure_ctx = frontier.get_failure_summary()
                 logger.info(
-                    f"Phase 2: Extracting {task_item.url} "
-                    f"({total_pages_extracted + pages_extracted + 1}/{len(target_urls)})"
+                    f"Quality gate: consecutive_failures={sigs.consecutive_failures}, "
+                    f"empty_rate={sigs.empty_rate:.0%} → re-exploring (round {reexplore_count})"
                 )
+                await _run_explorer(failure_context=failure_ctx)
 
-                extract_governor = Governor(
-                    max_steps=30, max_llm_calls=30, max_time_seconds=300,
-                    gate=CompletionGate(),
-                    monitor=RiskMonitor(),
-                )
-                extract_context = ContextManager(max_history_steps=3)
-
-                extract_task = {
-                    "url": task_item.url,
-                    "spec": spec,
-                    "role": "extraction",
-                    "site_context": site_context,
-                    "prior_experience": prior_experience,
-                }
-
-                extract_controller = CrawlController(
-                    llm_client=self._llm,
-                    tools=tools,
-                    governor=extract_governor,
-                    context_mgr=extract_context,
-                )
-
-                result = await extract_controller.run(extract_task)
-                page_data = result.get("data", [])
-                page_files = result.get("files", [])
-                # Deduplicate: skip records with same title+js_code fingerprint
-                new_records = []
-                for r in page_data:
-                    fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
-                    if fp not in _seen_fingerprints:
-                        _seen_fingerprints.add(fp)
-                        new_records.append(r)
-                page_data = new_records
-                all_data.extend(page_data)
-                all_files.extend(page_files)
-                pages_extracted += 1
-
-                self._state_mgr.record_page_visit(task_id, task_item.url)
-                self._state_mgr.add_data(task_id, page_data)
-
-                # Track consecutive empty pages for quality gate
-                if len(page_data) == 0:
-                    zero_record_streak += 1
-                    failed_pages_this_round.append(task_item.url)
-                else:
-                    zero_record_streak = 0
-
-                # Build accumulated cross-page experience (Reflexion pattern)
-                successful_tools = result.get("successful_tools", [])
-                failed_tools = result.get("failed_tools", [])
-                stop_reason = result.get("stop_reason", "")
-                metrics = result.get("metrics", {})
-                elapsed = metrics.get("elapsed_seconds", 0)
-                steps = result.get("steps", 0)
-                avg_time = round(elapsed / max(steps, 1), 1)
-
-                entry = (
-                    f"Page {total_pages_extracted + pages_extracted} ({task_item.url}): "
-                    f"{len(page_data)} records, {len(all_data)} total so far.\n"
-                    f"  stop={stop_reason}, {elapsed:.0f}s, {steps} steps (~{avg_time}s/step)\n"
-                    f"  code_that_worked={json.dumps(successful_tools[-3:], default=str, ensure_ascii=False)}\n"
-                    f"  failed={json.dumps(failed_tools[-3:], default=str, ensure_ascii=False)}\n"
-                    f"  sample={json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
-                )
-                experience_log.append(entry)
-                if len(experience_log) > 3:
-                    experience_log = experience_log[-3:]
-                prior_experience = "\n---\n".join(experience_log)
-
-                # Quality gate: 3 consecutive empty pages → trigger re-exploration
-                # Only on round 0 (one re-exploration allowed)
-                if zero_record_streak >= 3 and pages_extracted >= 3 and _explore_round == 0:
-                    exploration_feedback = {
-                        "failed_pages": failed_pages_this_round[-5:],
-                        "pages_tried": pages_extracted,
-                        "total_records": len(all_data),
-                        "sample_record": all_data[0] if all_data else None,
-                    }
-                    needs_reexplore = True
-                    logger.info(
-                        f"Quality gate: {zero_record_streak} consecutive empty pages after "
-                        f"{pages_extracted} tried. Triggering re-exploration."
-                    )
-                    break
-
-                # Check completion gate
-                gate = CompletionGate()
-                decision = gate.check(all_data, spec)
-                if decision.met:
-                    logger.info(f"Completion gate met: {decision.reason}")
-                    break
-
-            total_pages_extracted += pages_extracted
-            if not needs_reexplore:
+            # Completion gate
+            all_data_so_far = frontier.all_data()
+            gate = CompletionGate()
+            decision = gate.check(all_data_so_far, spec)
+            if decision.met:
+                logger.info(f"Completion gate met: {decision.reason}")
                 break
-            logger.info(f"Round {_explore_round + 1} done. Re-exploring with feedback.")
+
+        all_data = frontier.all_data()
+        stats = frontier.stats()
 
         # Track files in artifact manager
         if self._artifacts and all_files:
@@ -750,10 +696,11 @@ class Orchestrator:
             "pages_extracted": total_pages_extracted,
             "summary": f"Extracted {len(all_data)} records{file_summary} from {total_pages_extracted} pages",
             "metrics": {
-                "pages_found": len(last_target_urls),
+                "pages_found": stats["total_urls"],
                 "pages_extracted": total_pages_extracted,
                 "records": len(all_data),
                 "files": len(all_files),
+                "frontier_stats": stats,
             },
         }
 

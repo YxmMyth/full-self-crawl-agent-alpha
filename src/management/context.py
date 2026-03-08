@@ -69,7 +69,7 @@ class ContextManager:
         if role == "exploration":
             role_text = """You are a URL discovery agent.
 
-Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code. That is your only output — do not extract data content, never fabricate URLs.
+Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code.
 
 ## Strategy: macro → micro
 
@@ -97,12 +97,24 @@ Start with the biggest picture first, then narrow down:
 2. element_count < 20 → page empty/blocked → try bash or different URL
 3. strategy "networkidle" → fully rendered → analyze_links() or get_html()
 
+## Reporting URLs
+
+Call report_urls([url1, url2, ...]) inside execute_code as SOON as you find promising URLs.
+Do NOT accumulate URLs and report once at the end — report incrementally as you discover them.
+This way, even if your exploration is cut short, your findings are preserved.
+
+## Opportunistic extraction (optional, bounded)
+
+You MAY extract a 1-record sample from a URL to validate content quality. This is optional but useful.
+If you do extract a sample:
+  1. Extract just 1 record (to confirm the page has the target data)
+  2. Immediately ALSO call report_urls([current_url]) in the same execute_code call
+  3. Do NOT spend many steps extracting all records — that is Phase 2's job
+
 ## When to stop
 
-Once you have enough target URLs, call report_urls([...]) inside execute_code. Don't navigate every URL — just collect the list.
-If truly nothing found after 3+ different approaches, report_urls([]) with summary.
-
-Do NOT call save_records() during exploration."""
+Once you have enough target URLs reported, you're done.
+If truly nothing found after 3+ different approaches, call report_urls([]) with a summary."""
 
             feedback = task.get("feedback")
             if feedback:
@@ -112,6 +124,10 @@ Do NOT call save_records() during exploration."""
                     f"- Records collected so far: {feedback.get('total_records', 0)}\n"
                     f"- Try different sections, URL patterns, or listing pages this time."
                 )
+
+            frontier_summary = task.get("frontier_summary")
+            if frontier_summary:
+                role_text += f"\n\nQuality feedback from extraction phase:\n{frontier_summary}"
         else:
             role_text = """You are a data extraction agent.
 
