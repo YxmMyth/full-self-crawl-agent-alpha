@@ -322,18 +322,40 @@ class SharedFrontier:
             "consecutive_failures": self._consecutive_failures,
         }
 
+    # Field names that represent page location/identity, not extracted content.
+    # These are always non-empty on any page, so counting them as "substantive"
+    # would let empty listing-page records pass the quality check.
+    # This list uses universal web metadata naming conventions, not site-specific knowledge.
+    _STRUCTURAL_FIELD_NAMES = frozenset({
+        "url", "page_url", "href", "link", "path", "slug",
+        "id", "permalink", "canonical", "source_url",
+    })
+
     @staticmethod
     def _is_substantive(record: dict, target_fields: list[str]) -> bool:
-        """True if at least one target field has real, non-placeholder content.
+        """True if at least one CONTENT target field has real, non-placeholder content.
 
-        Empty CSS/HTML are normal (e.g. CodePen pens with no styling) — this
-        check only requires *some* target field to be filled, not all of them.
-        Driven by spec.target_fields, not domain-specific hardcoding.
+        Structural metadata fields (url, id, slug, href…) are excluded from the
+        check — they are always non-empty and represent page location, not content.
+        Only fields that represent actual extracted data count toward substantiveness.
+
+        Falls back to checking all target_fields when every target_field happens
+        to be structural (edge case: user explicitly collecting only URLs/IDs).
         """
         _EMPTY = {"", "n/a", "none", "null", "undefined", "unknown", "na"}
+
+        # Separate content fields from structural-metadata fields
+        content_fields = [
+            f for f in target_fields
+            if f.lower() not in SharedFrontier._STRUCTURAL_FIELD_NAMES
+        ]
+
+        # If spec only has structural fields (e.g. url-collection task), fall back to all
+        check_fields = content_fields if content_fields else target_fields
+
         return any(
             str(record.get(f, "")).strip().lower() not in _EMPTY
-            for f in target_fields
+            for f in check_fields
         )
 
     def _ingest_data(self, data: list[dict]) -> None:

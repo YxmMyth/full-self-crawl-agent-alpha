@@ -82,7 +82,14 @@ Respond in JSON:
     ] or null if this is a file download / non-structured task,
     "min_items": 10,
     "quality_threshold": 0.7
-}}"""
+}}
+
+IMPORTANT for target_fields:
+- Include only CONTENT fields — the actual data the user wants to extract.
+- Do NOT include page metadata fields such as: url, page_url, href, id, slug, path,
+  permalink, canonical, source_url. These are tracked automatically by the pipeline.
+- Example for "find research papers": target_fields should be [title, abstract, authors, doi]
+  NOT [title, abstract, authors, doi, url] — url is metadata, not content."""
 
     def __init__(self, llm_client):
         self.llm = llm_client

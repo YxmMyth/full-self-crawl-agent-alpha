@@ -934,6 +934,22 @@ class Orchestrator:
                     f'def save_records(records):\n'
                     f'    """Persist extracted records to the data pipeline. Call this to save your results."""\n'
                     f'    _recs = records if isinstance(records, list) else [records]\n'
+                    f'    # Content existence gate: same logic as js_extract_save.\n'
+                    f'    # Only blocks records with zero non-structural readable content.\n'
+                    f'    _STRUCT_G = {{"url","page_url","href","link","path","slug","id","permalink","canonical","source_url","error"}}\n'
+                    f'    _EMPTY_G = {{"","n/a","none","null","undefined","unknown","na"}}\n'
+                    f'    _has_content = any(\n'
+                    f'        len(str(_v or "").strip()) >= 15\n'
+                    f'        and str(_v or "").strip().lower() not in _EMPTY_G\n'
+                    f'        and not str(_v or "").strip().startswith(("http://","https://","/"))\n'
+                    f'        for _r in _recs if isinstance(_r, dict)\n'
+                    f'        for _k, _v in _r.items() if _k.lower() not in _STRUCT_G\n'
+                    f'    )\n'
+                    f'    if not _has_content:\n'
+                    f'        print("⚠️ save_records skipped: no substantial content in non-metadata fields.\\n"\n'
+                    f'              "  Possible causes: listing/nav page, content behind interaction, wrong page format.\\n"\n'
+                    f'              "  Use analyze_links() or get_page_state() instead of save_records() here.")\n'
+                    f'        return\n'
                     f'    if len(page_html.strip()) < 500:\n'
                     f'        print(f"⚠️ Warning: page content is very small ({{len(page_html)}} chars). Page may be blocked or empty. Verify records are based on real content.")\n'
                     f'    # Content anchoring: check if record values appear in page content\n'
@@ -1234,6 +1250,44 @@ class Orchestrator:
             })
         return result
 
+    @staticmethod
+    def _has_extractable_content(records: list, min_chars: int = 15) -> bool:
+        """Return True if any record has substantial non-structural content.
+
+        The gate is intentionally permissive — it only blocks records that are
+        completely devoid of non-structural text (e.g. listing-page records where
+        every field is either empty or a URL).
+
+        Structural field names (url, id, href, slug…) are excluded because they
+        are always non-empty on any page, regardless of whether useful data was
+        actually extracted. 'error' is excluded because it is a system field.
+
+        This check is deterministic (no LLM), runs in <1ms, and is site-agnostic:
+        it asks only "is there any readable text?" not "is the text relevant?".
+        Semantic relevance is the agent's job via think().
+        """
+        _STRUCTURAL = frozenset({
+            "url", "page_url", "href", "link", "path", "slug",
+            "id", "permalink", "canonical", "source_url", "error",
+        })
+        _EMPTY_VALS = {"", "n/a", "none", "null", "undefined", "unknown", "na"}
+
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            for key, value in record.items():
+                if key.lower() in _STRUCTURAL:
+                    continue
+                val = str(value or "").strip()
+                if not val or val.lower() in _EMPTY_VALS:
+                    continue
+                # Skip values that are themselves URLs (location metadata, not content)
+                if val.startswith(("http://", "https://", "/")):
+                    continue
+                if len(val) >= min_chars:
+                    return True
+        return False
+
     async def _read_run_knowledge_tool(self, key: str | None = None) -> dict:
         """Tool: read from run-level knowledge store."""
         if self._run_intelligence is None:
@@ -1254,6 +1308,35 @@ class Orchestrator:
             return {"error": "JS returned null/undefined"}
 
         records = result if isinstance(result, list) else [result]
+
+        # Content existence gate — deterministic, <1ms, no LLM needed.
+        # Only blocks records that are completely devoid of non-structural text.
+        # Permissive by design: partial records (some fields empty) still pass.
+        # Semantic relevance ("is this the RIGHT data?") is the agent's job.
+        if not self._has_extractable_content(records):
+            logger.info(
+                f"js_extract_save blocked: {len(records)} record(s) have no "
+                f"substantial non-structural content — likely listing/nav page"
+            )
+            return {
+                "saved": 0,
+                "blocked": True,
+                "reason": (
+                    "Extraction returned no substantial content in any non-metadata field. "
+                    "The extracted records contain only empty values or structural metadata "
+                    "(url, id, etc.) but no actual content text."
+                ),
+                "guidance": (
+                    "Possible situations — call think() to assess which applies:\n"
+                    "1. Listing/navigation page: use analyze_links() to find content URLs, "
+                    "then report_urls() to queue them.\n"
+                    "2. Content hidden behind interaction: use get_page_state() to find "
+                    "buttons or toggles that reveal the content.\n"
+                    "3. Alternate page format: navigate to the canonical content URL "
+                    "(check for links to editor/detail view on this page)."
+                ),
+            }
+
         # Build summary: replace long string values with char-count placeholders
         SUMMARY_THRESH = 500
         summary_records = []
