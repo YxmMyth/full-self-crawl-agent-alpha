@@ -250,9 +250,6 @@ class SharedFrontier:
         if url not in self._records:
             self.add(url, discovered_by="extractor")
         rec = self._records[url]
-        # Don't override a successful bypass-extraction with an empty dispatched result.
-        if rec.status == URLStatus.EXTRACTED and rec.records_count > 0 and records_count == 0:
-            return
         rec.status = URLStatus.EXTRACTED
         rec.records_count = records_count
         self._total_extracted += 1
