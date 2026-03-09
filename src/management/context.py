@@ -71,31 +71,28 @@ class ContextManager:
 
 Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code.
 
-## Strategy: macro → micro
+## MANDATORY FIRST TWO STEPS (do these before anything else)
 
-Start with the biggest picture first, then narrow down:
-1. Read your Site Intelligence briefing (below) — it's pre-fetched reconnaissance, not instructions
-2. Reason: what do the entry_points, live_endpoints, and sitemap_sample tell you about this site?
+Step 1: Read your Site Intelligence briefing in the task context (entry points, direct content, sitemap).
+Step 2: Call write_run_knowledge('site_model', {...}) with your initial assessment:
+  {
+    "structure": "describe what you see, e.g. listing: /tag/*, content: /pen/[slug]",
+    "estimated_total": N,        # rough estimate of how many target items exist
+    "estimation_basis": "from briefing / search results / pagination",
+    "content_url_pattern": "/pen/[slug]",   # URL pattern for content pages
+    "extraction_hint": "js_extract_save — code likely in JS editor, not static HTML"
+  }
+
+Write this even if your estimate is rough. You can refine it later.
+This ensures Phase 2 agents start with your understanding even if you run out of steps.
+
+## Then: URL discovery strategy (macro → micro)
+
 3. If the briefing is incomplete, use your tools to fill gaps:
    - search_site(query) — search within the domain. Call multiple times with different keywords
    - probe_endpoint(path) — HTTP HEAD check: does /topics/threejs exist? (fast, no browser)
    - navigate + analyze_links() — see what's actually rendered
    - bash — curl REST APIs, fetch sitemaps, hit JSON endpoints
-
-## Tools decision guide
-
-- search_site: best for finding content when you know what you're looking for
-  → Can call multiple times! If first keywords miss, try different terms
-- probe_endpoint: validate a hypothesis cheaply before navigating
-  → "Does /tag/threejs exist?" → probe first, then navigate if it does
-- analyze_links(): for SPA pages where JS renders the links
-- bash: for REST APIs, non-browser accessible data
-
-## Reading navigate() results
-
-1. hint "SPA loaded" or "network still active" → call analyze_links() RIGHT NOW (don't re-navigate)
-2. element_count < 20 → page empty/blocked → try bash or different URL
-3. strategy "networkidle" → fully rendered → analyze_links() or get_html()
 
 ## Reporting URLs
 
@@ -111,30 +108,10 @@ If you do extract a sample:
   2. Immediately ALSO call report_urls([current_url]) in the same execute_code call
   3. Do NOT spend many steps extracting all records — that is Phase 2's job
 
-## Site Modeling (REQUIRED — write before finishing)
-
-Before you finish, you MUST call write_run_knowledge('site_model', {...}) so every
-Extractor starts with your understanding instead of from zero.
-
-Required fields:
-  {
-    "structure": "e.g. listing: /tag/*, content: /pen/[slug]",
-    "estimated_total": N,          # how many target items exist on the site
-    "estimation_basis": "...",     # how you estimated (pagination, search count, sitemap)
-    "content_url_pattern": "...",  # regex or glob for content page URLs
-    "extraction_hint": "..."       # brief hint: js_extract_save? CSS selector? API?
-  }
-
-If you sampled any pages and extraction worked, also write the proven script:
-  write_run_knowledge('proven_scripts', {
-    '*/pen/*': {'script': '() => ({title: document.title, code: ...})'}
-  })
-
 ## When to stop
 
-Once you have enough target URLs reported AND you've written the site model, you're done.
-If truly nothing found after 3+ different approaches, call report_urls([]) and still
-write whatever partial site_model you could determine."""
+Once you have enough target URLs reported, you're done.
+If truly nothing found after 3+ different approaches, call report_urls([]) with a summary."""
 
             feedback = task.get("feedback")
             if feedback:
@@ -156,13 +133,17 @@ Mission: find and extract the target data. Your starting URL may or may not be w
 ## Start with Run Knowledge
 
 Call read_run_knowledge() as your FIRST action. It contains:
-- proven_scripts: JS extraction scripts that already work for URL patterns like yours
+- proven_scripts: JS arrow functions already known to work for URL patterns like yours
 - site_model: structure, estimated total items, content URL patterns
 - golden_records (via golden_summary in task context): what good data looks like
 
-If proven_scripts has a match for your URL pattern → use it directly. Skip trial-and-error.
-After a successful extraction → call write_run_knowledge('proven_scripts', {pattern: {script: ...}})
-so future agents don't have to rediscover it.
+If proven_scripts has a match for your URL pattern → use it directly as the script argument
+to js_extract_save(). Skip trial-and-error.
+
+IMPORTANT: proven_scripts contains data EXTRACTION code only — JS arrow functions like
+  '() => ({title: document.title, code: ..., author: ...})'
+NOT URL discovery code. If you find a working extraction script, write it back:
+  write_run_knowledge('proven_scripts', {'*/pen/*': {'script': '() => ({title: ..., code: ...})'}})
 
 If the task context shows a ⚡ verified skill for this URL, call it first — it was verified to work.
 

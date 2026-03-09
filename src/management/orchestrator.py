@@ -748,17 +748,13 @@ class Orchestrator:
                 experience_log = experience_log[-3:]
             prior_experience = "\n---\n".join(experience_log)
 
-            # Update run intelligence with extraction outcome
-            successful_tools = result.get("successful_tools", [])
-            js_scripts = [t.get("code", "") for t in successful_tools
-                          if t.get("tool") in ("execute_code", "js_extract_save") and t.get("code")]
-            if page_data and js_scripts:
-                run_intelligence.record_success(
-                    url_record.url, js_scripts[-1], len(page_data)
-                )
-            elif not page_data:
+            # Record failure if no data was extracted.
+            # Success is recorded directly in _js_extract_save (more accurate).
+            if not page_data:
                 stop_reason_local = result.get("stop_reason", "")
-                run_intelligence.record_failure(url_record.url, stop_reason_local or "empty result")
+                run_intelligence.record_failure(
+                    url_record.url, stop_reason_local or "empty result"
+                )
 
             # Update coverage in run knowledge
             run_intelligence.update_coverage(len(frontier.all_data()))
@@ -1291,6 +1287,16 @@ class Orchestrator:
 
         saved = len(records)
         logger.info(f"js_extract_save: saved {saved} record(s) directly from JS result")
+
+        # Record proven extraction script immediately — more accurate than inferring
+        # from successful_tools at session end, which can pick up URL-discovery code.
+        if self._run_intelligence is not None and records:
+            try:
+                current_url = await self._browser.evaluate("() => window.location.href") or ""
+                if current_url:
+                    self._run_intelligence.record_success(current_url, script, saved)
+            except Exception:
+                pass
 
         # Structural validation against golden records (non-LLM, deterministic)
         validation = {"ok": True, "issues": [], "passed": saved, "failed": 0}
