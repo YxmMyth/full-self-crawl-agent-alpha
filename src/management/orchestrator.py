@@ -74,6 +74,8 @@ class Orchestrator:
         # URL source registry: tracks URLs the agent has actually seen on pages.
         # Used as a gate to prevent hallucinated URLs in download_file etc.
         self._seen_urls: set[str] = set()
+        # Shared frontier reference (set in _run_full_site); navigate checks this for dedup.
+        self._frontier = None
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -554,6 +556,7 @@ class Orchestrator:
 
         # Create SharedFrontier and pre-seed from Phase 0
         frontier = SharedFrontier(max_urls=300, spec=spec)
+        self._frontier = frontier  # expose to navigate/js_extract_save for URL dedup
         seeded = frontier.seed_from_intel(site_intel, url)
         logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
@@ -752,6 +755,15 @@ class Orchestrator:
 
     async def _navigate_tracking_wrapper(self, url: str, wait_until: str = "networkidle") -> dict:
         """Wrap navigate to track visited URLs and extract text content metrics."""
+        # Dedup: skip navigation if this URL was already extracted/sampled in this run.
+        if self._frontier is not None:
+            from .scheduler import URLStatus
+            norm = url.split("#")[0].rstrip("/")
+            rec = self._frontier._records.get(norm)
+            if rec and rec.status in (URLStatus.EXTRACTED, URLStatus.SAMPLED):
+                logger.info(f"navigate: skipping {norm} — already extracted")
+                return {"url": url, "skipped": True, "reason": "URL already extracted in this run"}
+
         result = await self._browser.navigate(url, wait_until=wait_until)
         # Track the final URL (after redirects) as a seen URL
         final_url = result.get("url", url)
@@ -1153,6 +1165,19 @@ class Orchestrator:
             self._artifacts.write_manifest()
         else:
             logger.warning("js_extract_save: artifacts not initialized, records not persisted")
+
+        # Register this URL in frontier so navigate won't visit it again.
+        if self._frontier is not None:
+            try:
+                current_url = await self._browser.evaluate("() => window.location.href") or ""
+            except Exception:
+                current_url = ""
+            if current_url:
+                from .scheduler import URLStatus
+                norm = current_url.split("#")[0].rstrip("/")
+                existing = self._frontier._records.get(norm)
+                if existing is None or existing.status not in (URLStatus.IN_FLIGHT,):
+                    self._frontier.mark_extracted(norm, len(records), new_data=records)
 
         saved = len(records)
         logger.info(f"js_extract_save: saved {saved} record(s) directly from JS result")
