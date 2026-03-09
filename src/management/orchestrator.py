@@ -74,6 +74,8 @@ class Orchestrator:
         # URL source registry: tracks URLs the agent has actually seen on pages.
         # Used as a gate to prevent hallucinated URLs in download_file etc.
         self._seen_urls: set[str] = set()
+        # Shared frontier reference (set in _run_full_site); used by _js_extract_save for dedup.
+        self._frontier = None
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -447,7 +449,17 @@ class Orchestrator:
         if domain:
             from ..tools.search_tool import SearchSiteTool
             from ..tools.probe_tool import ProbeEndpointTool
-            _search_tool = SearchSiteTool(domain)
+            from .scheduler import URLStatus as _URLStatus
+
+            def _extracted_urls_fn() -> frozenset:
+                if self._frontier is None:
+                    return frozenset()
+                return frozenset(
+                    u for u, r in self._frontier._records.items()
+                    if r.status in (_URLStatus.EXTRACTED, _URLStatus.SAMPLED)
+                )
+
+            _search_tool = SearchSiteTool(domain, known_urls_fn=_extracted_urls_fn)
             _probe_tool = ProbeEndpointTool(domain)
             registry.register(
                 "search_site",
@@ -554,6 +566,7 @@ class Orchestrator:
 
         # Create SharedFrontier and pre-seed from Phase 0
         frontier = SharedFrontier(max_urls=300, spec=spec)
+        self._frontier = frontier  # expose to _js_extract_save for URL dedup
         seeded = frontier.seed_from_intel(site_intel, url)
         logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
@@ -1136,6 +1149,20 @@ class Orchestrator:
             return {"error": "JS returned null/undefined"}
 
         records = result if isinstance(result, list) else [result]
+
+        # URL-level dedup: skip if this page was already extracted in this run.
+        current_url = ""
+        try:
+            current_url = await self._browser.evaluate("() => window.location.href") or ""
+        except Exception:
+            pass
+        if current_url and self._frontier is not None:
+            from .scheduler import URLStatus
+            norm = current_url.split("#")[0].rstrip("/")
+            rec = self._frontier._records.get(norm)
+            if rec and rec.status in (URLStatus.EXTRACTED, URLStatus.SAMPLED):
+                logger.info(f"js_extract_save: skipping {norm} — already extracted")
+                return {"saved": 0, "skipped": True, "reason": "URL already extracted"}
         # Build summary: replace long string values with char-count placeholders
         SUMMARY_THRESH = 500
         summary_records = []
@@ -1153,6 +1180,15 @@ class Orchestrator:
             self._artifacts.write_manifest()
         else:
             logger.warning("js_extract_save: artifacts not initialized, records not persisted")
+
+        # Register bypass-extracted URLs in frontier so they're filtered from future search results.
+        if current_url and self._frontier is not None:
+            from .scheduler import URLStatus
+            norm = current_url.split("#")[0].rstrip("/")
+            existing = self._frontier._records.get(norm)
+            if existing is None or existing.status not in (URLStatus.IN_FLIGHT,):
+                # Not a properly dispatched URL — register it so frontier won't re-queue/re-show it.
+                self._frontier.mark_extracted(norm, len(records), new_data=records)
 
         saved = len(records)
         logger.info(f"js_extract_save: saved {saved} record(s) directly from JS result")

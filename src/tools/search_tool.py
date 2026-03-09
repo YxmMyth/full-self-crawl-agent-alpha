@@ -18,8 +18,9 @@ class SearchSiteTool:
         results = await tool.run("best threejs demos")
     """
 
-    def __init__(self, domain: str):
+    def __init__(self, domain: str, known_urls_fn=None):
         self.domain = domain.lstrip("www.")
+        self._known_urls_fn = known_urls_fn  # () -> frozenset[str] of already-extracted URLs
 
     async def run(self, query: str, max_results: int = 10) -> dict:
         """Search site:{domain} {query} via DDG.
@@ -67,4 +68,14 @@ class SearchSiteTool:
             return {"error": str(e), "results": [], "query": query, "total": 0}
 
         logger.info(f"search_site: {len(results)} results for '{full_query[:60]}'")
+
+        # Filter URLs already extracted in this run so the agent sees only fresh pages.
+        if self._known_urls_fn:
+            known = self._known_urls_fn()
+            before = len(results)
+            results = [r for r in results if r["url"].split("#")[0].rstrip("/") not in known]
+            filtered = before - len(results)
+            if filtered:
+                logger.info(f"search_site: filtered {filtered} already-extracted URL(s)")
+
         return {"results": results, "query": full_query, "total": len(results)}
