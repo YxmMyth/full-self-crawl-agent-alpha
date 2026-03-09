@@ -181,10 +181,6 @@ class SharedFrontier:
         self._consecutive_failures = 0
         self._total_extracted = 0
         self._spec = spec  # CrawlSpec for spec-aware validation
-        # Required fields from golden schema (set by orchestrator after Explorer runs).
-        # When set, ALL required fields must be non-empty for a record to be substantive.
-        # This prevents listing-page records (with only url non-empty) from passing.
-        self.golden_required_fields: list[str] = []
 
     def seed_from_intel(self, site_intel, start_url: str) -> int:
         """Pre-populate from Phase 0 SiteIntelligence + start URL.
@@ -327,31 +323,14 @@ class SharedFrontier:
         }
 
     @staticmethod
-    def _is_substantive(record: dict, target_fields: list[str],
-                        required_fields: list[str] | None = None) -> bool:
-        """True if the record contains real content, not a listing-page placeholder.
+    def _is_substantive(record: dict, target_fields: list[str]) -> bool:
+        """True if at least one target field has real, non-placeholder content.
 
-        Two-tier check:
-        1. If golden required_fields are set: ALL of them must be non-empty.
-           This catches listing-page records that have only metadata (url, etc.)
-           but none of the actual content fields (js_code, article_body, etc.).
-        2. Otherwise fallback: ANY target_field non-empty (original behaviour).
-
-        required_fields comes from RunIntelligence.golden_required_fields — fields
-        present in 80%+ of Explorer-verified sample records.
+        Empty CSS/HTML are normal (e.g. CodePen pens with no styling) — this
+        check only requires *some* target field to be filled, not all of them.
+        Driven by spec.target_fields, not domain-specific hardcoding.
         """
         _EMPTY = {"", "n/a", "none", "null", "undefined", "unknown", "na"}
-
-        if required_fields:
-            # Strict: every required field must have a non-empty value.
-            # Empty CSS/HTML on real pens is fine — they won't be required_fields
-            # unless Explorer's golden samples also had them filled.
-            return all(
-                str(record.get(f, "")).strip().lower() not in _EMPTY
-                for f in required_fields
-            )
-
-        # Fallback (no golden schema yet): any target field non-empty.
         return any(
             str(record.get(f, "")).strip().lower() not in _EMPTY
             for f in target_fields
@@ -368,15 +347,10 @@ class SharedFrontier:
         for r in data:
             if not isinstance(r, dict):
                 continue
-            # Reject records without substantive content.
-            # Uses golden required_fields (AND logic) if available, else
-            # any-field logic as fallback.
-            req = self.golden_required_fields if self.golden_required_fields else None
-            if target_fields and not self._is_substantive(r, target_fields, req):
-                logger.debug(
-                    f"Dropping record: missing required fields "
-                    f"(required={req or target_fields})"
-                )
+            # Reject records with no substantive content across any target field.
+            # With no spec (target_fields empty), accept all non-empty records.
+            if target_fields and not self._is_substantive(r, target_fields):
+                logger.debug("Dropping record: no substantive content in target fields")
                 continue
             key_fields = (
                 [f["name"] for f in self._spec.target_fields[:3]]

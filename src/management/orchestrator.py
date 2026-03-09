@@ -654,17 +654,6 @@ class Orchestrator:
                     f"RunIntelligence: {len(explorer_data)} Explorer samples "
                     f"saved as golden records"
                 )
-                # Push golden required fields into frontier so _is_substantive()
-                # uses AND logic (all required fields must be non-empty).
-                # This prevents listing-page records from passing quality filter.
-                schema = run_intelligence.get_golden_schema()
-                req = [f for f, s in schema.items() if s.get("required")]
-                if req:
-                    frontier.golden_required_fields = req
-                    logger.info(
-                        f"Frontier: golden required fields set to {req} — "
-                        f"listing-page records will be filtered"
-                    )
 
         # Phase 1: initial exploration
         await _run_explorer()
@@ -1322,38 +1311,6 @@ class Orchestrator:
                     f"js_extract_save: validation issues — "
                     f"{validation['failed']}/{saved} records failed: {validation['issues'][:3]}"
                 )
-
-        # Hard block: if ALL records fail required-field validation, this page
-        # is likely a listing/index page, not a content page.
-        # Don't save anything; return actionable error so agent can self-correct.
-        schema = self._run_intelligence.get_golden_schema() if self._run_intelligence else {}
-        required_fields = [f for f, s in schema.items() if s.get("required")]
-        if required_fields and records:
-            _EMPTY = {"", "n/a", "none", "null", "undefined", "unknown", "na"}
-            passing = [
-                r for r in records
-                if all(
-                    str(r.get(f, "")).strip().lower() not in _EMPTY
-                    for f in required_fields
-                )
-            ]
-            if not passing:
-                # Undo the save — records were written to artifacts but should not count
-                logger.warning(
-                    f"js_extract_save: ALL {saved} records missing required fields "
-                    f"{required_fields} — page is likely a listing/index page, not saving"
-                )
-                return {
-                    "saved": 0,
-                    "blocked": True,
-                    "reason": (
-                        f"All {saved} records missing required content fields: {required_fields}. "
-                        f"You are likely on a listing or index page, not a content page. "
-                        f"Navigate to an individual content URL (e.g. matching pattern "
-                        f"{self._run_intelligence.read('site_model').get('content_url_pattern', '*/pen/*')}) "
-                        f"and try again."
-                    ),
-                }
 
         result: dict = {
             "saved": saved,
