@@ -76,6 +76,8 @@ class Orchestrator:
         self._seen_urls: set[str] = set()
         # Shared frontier reference (set in _run_full_site); navigate checks this for dedup.
         self._frontier = None
+        # Run-level knowledge accumulation (set in _run_full_site).
+        self._run_intelligence = None
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -482,6 +484,45 @@ class Orchestrator:
                  "required": ["path"]},
             )
 
+        # --- Run Intelligence tools (2) ---
+        # Always registered; no-ops when _run_intelligence is None (single_page mode).
+        registry.register(
+            "read_run_knowledge",
+            self._read_run_knowledge_tool,
+            "Read accumulated knowledge from this crawl run.\n"
+            "Call at the START of your session to get:\n"
+            "- site_model: structure, estimated total, content URL patterns\n"
+            "- proven_scripts: JS scripts that already work for URL patterns like yours\n"
+            "- failure_log: URLs/patterns that failed (avoid repeating these)\n"
+            "- coverage: how many records extracted so far vs estimated total\n\n"
+            "Returns the full knowledge dict, or just one section if key is specified.\n"
+            "Example: read_run_knowledge('proven_scripts') → get all verified extraction scripts.",
+            {"type": "object", "properties": {
+                "key": {"type": "string",
+                        "description": "Section to read: 'site_model', 'proven_scripts', 'failure_log', 'coverage'. Omit for all."}
+            }},
+        )
+        registry.register(
+            "write_run_knowledge",
+            self._write_run_knowledge_tool,
+            "Write knowledge back to the shared run store so future agents benefit.\n\n"
+            "Explorer MUST write 'site_model' before finishing:\n"
+            "  write_run_knowledge('site_model', {\n"
+            "    'structure': 'listing: /tag/*, content: /pen/[slug]',\n"
+            "    'estimated_total': 300,\n"
+            "    'estimation_basis': '15 pages × 20 items/page',\n"
+            "    'content_url_pattern': '/pen/[a-zA-Z0-9]+',\n"
+            "    'extraction_hint': 'js_extract_save, code in <textarea#code>'\n"
+            "  })\n\n"
+            "Extractors write proven scripts after success:\n"
+            "  write_run_knowledge('proven_scripts', {'*/pen/*': {'script': '() => ({title: ...})'}})\n\n"
+            "Returns {ok: true, key: '...'}",
+            {"type": "object", "properties": {
+                "key": {"type": "string", "description": "Key to write (e.g. 'site_model', 'proven_scripts')"},
+                "value": {"description": "Value to store (dict, list, or scalar)"},
+            }, "required": ["key", "value"]},
+        )
+
         self._tools = registry
         return registry
 
@@ -546,6 +587,7 @@ class Orchestrator:
         from .context import ContextManager
         from .governor import Governor
         from .scheduler import SharedFrontier
+        from .run_intelligence import RunIntelligence
 
         all_files = []
         experience_log: list[str] = []
@@ -553,6 +595,12 @@ class Orchestrator:
 
         # Seed seen_urls with the start URL
         self._seen_urls.add(url)
+
+        # Initialize run-level knowledge accumulation
+        intel_dir = str(self._artifacts.base_dir) if self._artifacts else "./artifacts"
+        run_intelligence = RunIntelligence(intel_dir)
+        run_intelligence.initialize()
+        self._run_intelligence = run_intelligence  # expose to _js_extract_save + tools
 
         # Create SharedFrontier and pre-seed from Phase 0
         frontier = SharedFrontier(max_urls=300, spec=spec)
@@ -571,6 +619,7 @@ class Orchestrator:
             explore_task: dict = {
                 "url": url, "spec": spec, "role": "exploration",
                 "site_intel": site_intel,
+                "run_intelligence": run_intelligence,
             }
             if failure_context:
                 explore_task["frontier_summary"] = failure_context
@@ -594,6 +643,17 @@ class Orchestrator:
                 frontier.mark_sampled(s_url, records_count=1)
             if sampled:
                 logger.info(f"Explorer sampled {len(sampled)} URLs — Phase 2 will skip them")
+
+            # Save Explorer's sampled records as golden reference for Phase 2.
+            # These are discarded from all_data (by design), but preserved as
+            # structural anchors: field schema, typical lengths, content samples.
+            explorer_data = explore_result.get("data", [])
+            if explorer_data and not failure_context:  # only on first exploration
+                run_intelligence.save_golden_records(explorer_data)
+                logger.info(
+                    f"RunIntelligence: {len(explorer_data)} Explorer samples "
+                    f"saved as golden records"
+                )
 
         # Phase 1: initial exploration
         await _run_explorer()
@@ -630,12 +690,19 @@ class Orchestrator:
                 if site_intel.direct_content:
                     dc_urls = [u.url for u in site_intel.direct_content[:5]]
                     site_ctx_lines.append(f"Verified content pages found: {dc_urls}")
+            # Build knowledge summary for this Extractor session
+            knowledge_summary = run_intelligence.get_context_summary()
+            golden_summary = run_intelligence.get_golden_summary()
+
             extract_task = {
                 "url": url_record.url,
                 "spec": spec,
                 "role": "extraction",
                 "site_context": "\n".join(site_ctx_lines),
                 "prior_experience": prior_experience,
+                "run_intelligence": run_intelligence,
+                "knowledge_summary": knowledge_summary,
+                "golden_summary": golden_summary,
             }
             extract_controller = CrawlController(
                 llm_client=self._llm, tools=tools,
@@ -681,6 +748,21 @@ class Orchestrator:
                 experience_log = experience_log[-3:]
             prior_experience = "\n---\n".join(experience_log)
 
+            # Update run intelligence with extraction outcome
+            successful_tools = result.get("successful_tools", [])
+            js_scripts = [t.get("code", "") for t in successful_tools
+                          if t.get("tool") in ("execute_code", "js_extract_save") and t.get("code")]
+            if page_data and js_scripts:
+                run_intelligence.record_success(
+                    url_record.url, js_scripts[-1], len(page_data)
+                )
+            elif not page_data:
+                stop_reason_local = result.get("stop_reason", "")
+                run_intelligence.record_failure(url_record.url, stop_reason_local or "empty result")
+
+            # Update coverage in run knowledge
+            run_intelligence.update_coverage(len(frontier.all_data()))
+
             # Quality check → re-explore if needed
             sigs = frontier.quality_signals()
             if sigs.needs_reexplore() and reexplore_count < 2:
@@ -697,8 +779,24 @@ class Orchestrator:
             gate = CompletionGate()
             decision = gate.check(all_data_so_far, spec)
             if decision.met:
-                logger.info(f"Completion gate met: {decision.reason}")
-                break
+                # Additional coverage check: don't stop too early if we know the site is large
+                estimated_total = run_intelligence.get_estimated_total()
+                if estimated_total > 20:
+                    coverage_pct = len(all_data_so_far) / estimated_total
+                    if coverage_pct < 0.1:
+                        logger.info(
+                            f"Completion gate met ({decision.reason}) but coverage only "
+                            f"{coverage_pct:.0%} of ~{estimated_total} — continuing"
+                        )
+                    else:
+                        logger.info(
+                            f"Completion gate met: {decision.reason} "
+                            f"(coverage {coverage_pct:.0%} of ~{estimated_total})"
+                        )
+                        break
+                else:
+                    logger.info(f"Completion gate met: {decision.reason}")
+                    break
 
         all_data = frontier.all_data()
         stats = frontier.stats()
@@ -1140,6 +1238,18 @@ class Orchestrator:
             })
         return result
 
+    async def _read_run_knowledge_tool(self, key: str | None = None) -> dict:
+        """Tool: read from run-level knowledge store."""
+        if self._run_intelligence is None:
+            return {"note": "Run knowledge not available in single_page mode"}
+        return self._run_intelligence.read(key)
+
+    async def _write_run_knowledge_tool(self, key: str, value) -> dict:
+        """Tool: write to run-level knowledge store."""
+        if self._run_intelligence is None:
+            return {"note": "Run knowledge not available in single_page mode"}
+        return self._run_intelligence.write(key, value)
+
     async def _js_extract_save(self, script: str) -> dict:
         """Evaluate JS, save result as records, return only a summary — large data never enters LLM context."""
         import uuid
@@ -1181,12 +1291,38 @@ class Orchestrator:
 
         saved = len(records)
         logger.info(f"js_extract_save: saved {saved} record(s) directly from JS result")
-        return {
+
+        # Structural validation against golden records (non-LLM, deterministic)
+        validation = {"ok": True, "issues": [], "passed": saved, "failed": 0}
+        if self._run_intelligence is not None and records:
+            try:
+                page_html = await self._browser.get_html() or ""
+            except Exception:
+                page_html = ""
+            validation = self._run_intelligence.validate_records(records, page_html)
+            if not validation["ok"]:
+                logger.warning(
+                    f"js_extract_save: validation issues — "
+                    f"{validation['failed']}/{saved} records failed: {validation['issues'][:3]}"
+                )
+
+        result: dict = {
             "saved": saved,
             "summary": summary_records,
             "_records": records,  # side-channel for controller._collect_side_channel
             "note": "Full data saved to records pipeline. LLM context shows summary only.",
         }
+        if not validation["ok"]:
+            result["validation"] = {
+                "passed": validation["passed"],
+                "failed": validation["failed"],
+                "issues": validation["issues"],
+                "action": (
+                    "Some records failed structural validation. "
+                    "Check your selectors — fields may be empty or values not matching page content."
+                ),
+            }
+        return result
 
     async def cleanup(self) -> None:
         """Release resources."""

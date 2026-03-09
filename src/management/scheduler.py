@@ -352,7 +352,12 @@ class SharedFrontier:
             if target_fields and not self._is_substantive(r, target_fields):
                 logger.debug("Dropping record: no substantive content in target fields")
                 continue
-            fp = (r.get("title", ""), (r.get("js_code") or "")[:100])
+            key_fields = (
+                [f["name"] for f in self._spec.target_fields[:3]]
+                if self._spec and self._spec.target_fields
+                else list(r.keys())[:3]
+            )
+            fp = tuple(str(r.get(f, ""))[:120] for f in key_fields)
             if fp not in self._seen_fingerprints:
                 self._seen_fingerprints.add(fp)
                 self._all_data.append(r)

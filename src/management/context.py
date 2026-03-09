@@ -111,10 +111,30 @@ If you do extract a sample:
   2. Immediately ALSO call report_urls([current_url]) in the same execute_code call
   3. Do NOT spend many steps extracting all records — that is Phase 2's job
 
+## Site Modeling (REQUIRED — write before finishing)
+
+Before you finish, you MUST call write_run_knowledge('site_model', {...}) so every
+Extractor starts with your understanding instead of from zero.
+
+Required fields:
+  {
+    "structure": "e.g. listing: /tag/*, content: /pen/[slug]",
+    "estimated_total": N,          # how many target items exist on the site
+    "estimation_basis": "...",     # how you estimated (pagination, search count, sitemap)
+    "content_url_pattern": "...",  # regex or glob for content page URLs
+    "extraction_hint": "..."       # brief hint: js_extract_save? CSS selector? API?
+  }
+
+If you sampled any pages and extraction worked, also write the proven script:
+  write_run_knowledge('proven_scripts', {
+    '*/pen/*': {'script': '() => ({title: document.title, code: ...})'}
+  })
+
 ## When to stop
 
-Once you have enough target URLs reported, you're done.
-If truly nothing found after 3+ different approaches, call report_urls([]) with a summary."""
+Once you have enough target URLs reported AND you've written the site model, you're done.
+If truly nothing found after 3+ different approaches, call report_urls([]) and still
+write whatever partial site_model you could determine."""
 
             feedback = task.get("feedback")
             if feedback:
@@ -132,6 +152,17 @@ If truly nothing found after 3+ different approaches, call report_urls([]) with 
             role_text = """You are a goal-pursuing data agent.
 
 Mission: find and extract the target data. Your starting URL may or may not be where the data lives — observe the page and follow the evidence toward your goal.
+
+## Start with Run Knowledge
+
+Call read_run_knowledge() as your FIRST action. It contains:
+- proven_scripts: JS extraction scripts that already work for URL patterns like yours
+- site_model: structure, estimated total items, content URL patterns
+- golden_records (via golden_summary in task context): what good data looks like
+
+If proven_scripts has a match for your URL pattern → use it directly. Skip trial-and-error.
+After a successful extraction → call write_run_knowledge('proven_scripts', {pattern: {script: ...}})
+so future agents don't have to rediscover it.
 
 If the task context shows a ⚡ verified skill for this URL, call it first — it was verified to work.
 
@@ -162,8 +193,9 @@ If you find more target URLs than your step budget can handle, call report_urls(
 the system picks them up for parallel processing.
 Navigate efficiently: only when it genuinely moves you toward the goal.
 
-When done, say "TASK COMPLETE" with a brief summary: what you extracted, and what
-you observed about the page structure (useful context for future runs)."""
+When done: if you found a working extraction method that wasn't already in run_knowledge,
+call write_run_knowledge('proven_scripts', {'URL_PATTERN': {'script': 'YOUR_SCRIPT'}})
+before saying "TASK COMPLETE"."""
 
         site_context = task.get("site_context", "")
         if site_context:
@@ -175,7 +207,7 @@ Environment:
 - You are running in a headless Chromium browser inside a Docker container.
 - Some sites detect headless browsers and may block access or serve challenge pages.
 - If browser navigation fails or pages appear empty, try bash(curl ...) for direct HTTP access or look for API endpoints.
-- navigate() returns page metadata including load_time_ms and element_count — use this to detect blocked or empty pages.
+- navigate() returns page metadata including load_time_ms and element_count - use this to detect blocked or empty pages.
 """
         # Inject credential awareness if available
         site_user = os.environ.get("SITE_USERNAME", "")
@@ -320,6 +352,16 @@ Rules:
                 "or navigate elsewhere if the data requires it."
             )
             parts.extend(intel_lines)
+
+        # Run intelligence: accumulated knowledge from Explorer + previous Extractors
+        knowledge_summary = task.get("knowledge_summary", "")
+        if knowledge_summary:
+            parts.append(f"\n{knowledge_summary}")
+
+        # Golden record summary: what verified good data looks like
+        golden_summary = task.get("golden_summary", "")
+        if golden_summary:
+            parts.append(f"\n{golden_summary}")
 
         # Prior experience from previous pages
         prior = task.get("prior_experience")
