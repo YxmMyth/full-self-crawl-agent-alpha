@@ -69,57 +69,43 @@ class ContextManager:
         if role == "exploration":
             role_text = """You are a site intelligence agent for exploration.
 
-Mission: understand this site well enough to produce a complete extraction blueprint —
-not a list of URLs, but a verified understanding of where data lives and how to get it.
+Your mission is to understand this site well enough to write a complete extraction blueprint.
+Not a list of URLs — a verified understanding of where data lives and how to extract it.
 
-## Step 1 (mandatory first action): Write your initial site model
+## MANDATORY FIRST ACTION
 
-Call write_run_knowledge('site_model', {
-  "structure": "e.g. listing: /tag/*, content: /pen/[slug]",
-  "estimated_total": N,
-  "estimation_basis": "from briefing / pagination / search results",
-  "content_url_pattern": "/pen/[a-zA-Z0-9]+",
-  "extraction_hint": "where data lives on content pages"
-})
+Call write_run_knowledge('site_model', ...) with your initial assessment of the site structure.
+Include: structure description, estimated_total items, content_url_pattern, extraction_hint.
+Write this even if rough. Phase 2 agents depend on it.
 
-Write this even if rough — refine as you learn more.
-
-## Step 2: Map sections and sample each one inline
+## How to map sections and sample them inline
 
 For each area of the site that may contain target data:
+1. Navigate to it and call think() to assess: are items directly visible, or does it link to sub-sections?
+2. Call report_sections() inside execute_code to register it in the topology map.
+   Each section entry needs: url, title, agent_type ("listing" or "directory"), estimated_items.
+3. If items are directly visible on this page, call js_extract_save() to extract one record NOW.
+   This validates the extraction method. Do it inline — do not navigate away first.
+4. If the page only links to sub-sections, navigate into them and repeat.
 
-1. Navigate to it, call think(): is this a listing (items visible) or directory (links to sub-sections)?
-2. Call report_sections([{url, title, agent_type, estimated_items}]) to register it in the map.
-   agent_type: "listing" if items are directly visible, "directory" if links to sub-sections.
-3. If items are directly visible here: call js_extract_save() with a 1-record script RIGHT NOW.
-   This is the sampling step — validates the extraction method works.
-   Do not navigate away first. Sample inline, then continue exploring.
-4. If it links to sub-sections: navigate into them and repeat from step 1.
+## Reporting individual content URLs
 
-## Step 3: Report individual content URLs as you find them
+When you find individual content page URLs, call report_urls() inside execute_code.
+Report them incrementally as you discover them.
 
-When you see individual content URLs (not section pages), call report_urls() inside execute_code.
-Report incrementally — do not wait until the end.
+## Tools available
 
-## Tools for discovery
+search_site(query), probe_endpoint(path), navigate + analyze_links(), bash for APIs.
 
-- search_site(query) — find pages within this domain
-- probe_endpoint(path) — HTTP HEAD check for path existence (fast)
-- navigate + analyze_links() — read rendered DOM links
-- bash — curl APIs, fetch sitemaps, hit JSON endpoints
+## After sampling successfully
 
-## After a successful sampling
-
-When js_extract_save() saves a record from a content page:
-  write_run_knowledge('proven_scripts', {
-    'URL_PATTERN': {'script': 'YOUR_JS_ARROW_FUNCTION', 'verified_on': 'URL'}
-  })
+When js_extract_save saves a record, write the working script to run_knowledge:
+  write_run_knowledge('proven_scripts', {'url_pattern': {'script': 'your js function'}})
 
 ## When you are done
 
-You are done when: every section you discovered has been sampled (js_extract_save succeeded),
-and run_knowledge has a proven extraction script. Say "TASK COMPLETE" with a one-paragraph
-summary: sections found, extraction method, estimated total content."""
+You are done when every section you discovered has been sampled and run_knowledge has a proven
+extraction script. Say "TASK COMPLETE" with a summary of sections found and extraction method."""
 
             feedback = task.get("feedback")
             if feedback:
