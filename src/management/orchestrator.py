@@ -791,6 +791,35 @@ class Orchestrator:
             except Exception as e:
                 logger.warning(f"Pre-navigation failed for {url_record.url}: {e} — agent will handle")
 
+            # Hard-replay: if a proven extraction script exists, run it directly
+            # without starting an LLM session. Site-agnostic — the script was
+            # discovered by the LLM on a previous URL; here we just execute it.
+            proven_script = run_intelligence.get_script_for_url(url_record.url)
+            if proven_script:
+                try:
+                    raw = await self._browser.evaluate(proven_script)
+                    if raw is not None:
+                        records = raw if isinstance(raw, list) else [raw]
+                        if self._has_extractable_content(records):
+                            frontier.mark_extracted(
+                                url_record.url, len(records), new_data=records)
+                            run_intelligence.record_success(
+                                url_record.url, proven_script, len(records))
+                            run_intelligence.update_coverage(len(frontier.all_data()))
+                            self._state_mgr.record_page_visit(task_id, url_record.url)
+                            self._state_mgr.add_data(task_id, records)
+                            if ext_session_id and self._db:
+                                await self._db.complete_session(
+                                    ext_session_id, "hard_replay", 0, len(records), 0, "")
+                            logger.info(
+                                f"Hard-replay: {url_record.url} → "
+                                f"{len(records)} record(s), no LLM session"
+                            )
+                            total_pages_extracted += 1
+                            continue
+                except Exception as e:
+                    logger.debug(f"Hard-replay failed for {url_record.url}: {e} — falling back to LLM")
+
             extract_governor = Governor(
                 max_steps=30, max_llm_calls=30, max_time_seconds=300,
                 gate=CompletionGate(), monitor=RiskMonitor(),
