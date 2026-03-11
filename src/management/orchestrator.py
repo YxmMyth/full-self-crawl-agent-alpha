@@ -631,12 +631,22 @@ class Orchestrator:
             )
             explore_result = await explore_controller.run(explore_task)
 
-            # Write discovered sections to DB
+            # Write discovered sections to DB.
+            # If Explorer sampled a section inline (sampled=True in memory), also
+            # mark it sampled in DB now — prevents sampling loop from re-sampling it.
             explore_sections = explore_result.get("sections", [])
             if explore_sections and self._db and self._run_id:
+                sampled_in_db = 0
                 for sec in explore_sections:
                     await self._db.upsert_section(self._run_id, sec)
-                logger.info(f"Explorer: {len(explore_sections)} sections written to DB")
+                    if sec.get("sampled"):
+                        await self._db.mark_section_sampled(
+                            self._run_id, sec.get("url", ""), [])
+                        sampled_in_db += 1
+                logger.info(
+                    f"Explorer: {len(explore_sections)} sections written to DB "
+                    f"({sampled_in_db} already sampled inline)"
+                )
 
             # Ingest discovered URLs into frontier
             discovered = explore_result.get("new_links", [])
@@ -667,10 +677,22 @@ class Orchestrator:
             return {"sections": explore_sections}
 
         async def _run_sampling_loop(sections: list[dict]) -> None:
-            """Orchestrator-driven loop: sample 2-3 records from each discovered section."""
+            """Fallback sampling loop: only processes sections Explorer didn't sample inline."""
             if not sections:
                 return
-            logger.info(f"Sampling loop: {len(sections)} sections to sample")
+            # Filter to DB-unsampled sections — Explorer may have already sampled some inline.
+            # DB is the source of truth; avoid redundant re-sampling.
+            if self._db and self._run_id:
+                try:
+                    unsampled_rows = await self._db.get_unsampled_sections(self._run_id)
+                    unsampled_urls = {r["url"] for r in unsampled_rows}
+                    sections = [s for s in sections if s.get("url") in unsampled_urls]
+                except Exception as e:
+                    logger.warning(f"Could not filter unsampled sections from DB: {e}")
+            if not sections:
+                logger.info("Sampling loop: all sections already sampled by Explorer inline")
+                return
+            logger.info(f"Sampling loop: {len(sections)} sections need sampling")
             for section in sections:
                 section_url = section.get("url", "")
                 if not section_url:
@@ -722,6 +744,24 @@ class Orchestrator:
         explore_meta = await _run_explorer()
         discovered_sections = (explore_meta or {}).get("sections", [])
         await _run_sampling_loop(discovered_sections)
+
+        # Structural completion check: log blueprint state before starting extraction
+        if self._db and self._run_id:
+            try:
+                from ..strategy.gate import StructuralCompletionGate
+                all_secs = await self._db.get_all_sections(self._run_id)
+                unsampled = [s for s in all_secs if not s.get("sampled")]
+                has_script = bool(run_intelligence.read("proven_scripts"))
+                gate = StructuralCompletionGate()
+                decision = gate.check(len(all_secs), len(all_secs) - len(unsampled), has_script)
+                logger.info(f"Structural blueprint: {decision.reason}")
+                if not decision.met and unsampled:
+                    logger.info(
+                        f"{len(unsampled)} section(s) still unsampled — "
+                        f"extraction will proceed with partial blueprint"
+                    )
+            except Exception as e:
+                logger.debug(f"Structural gate check skipped: {e}")
 
         reexplore_count = 0
         prior_experience: str | None = None

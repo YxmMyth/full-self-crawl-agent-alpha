@@ -418,11 +418,26 @@ class CrawlController:
                     current_url = self._task.get("current_url", "")
                     if current_url:
                         self._sampled_urls.add(current_url.split("#")[0].rstrip("/"))
-                    # Mark the most recent unsampled section as sampled (inline sampling)
-                    for sec in reversed(self._collected_sections):
-                        if not sec.get("sampled"):
-                            sec["sampled"] = True
-                            break
+                    # Mark the section being sampled based on current_url.
+                    # Prefer exact URL match, then parent-path match, then most-recent fallback.
+                    current_url = self._task.get("current_url", "")
+                    norm_current = current_url.split("#")[0].rstrip("/") if current_url else ""
+                    matched = False
+                    if norm_current:
+                        for sec in reversed(self._collected_sections):
+                            if sec.get("sampled"):
+                                continue
+                            sec_url = sec.get("url", "").split("#")[0].rstrip("/")
+                            if sec_url == norm_current or norm_current.startswith(sec_url + "/"):
+                                sec["sampled"] = True
+                                matched = True
+                                break
+                    if not matched:
+                        # Fallback: mark most recent unsampled section
+                        for sec in reversed(self._collected_sections):
+                            if not sec.get("sampled"):
+                                sec["sampled"] = True
+                                break
             if urls:
                 new_links.extend(urls)
                 data["_reported"] = f"{len(urls)} URLs reported via report_urls()"
