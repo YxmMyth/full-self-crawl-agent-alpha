@@ -248,25 +248,61 @@ asyncio.create_task(_run_extractor_pooled(url))
 
 **超时保护：** 每个 Extractor session 有 300s 时间上限，超时后 page 强制关闭并从 pool 中替换为新 page。pool 中的 page 不会永久挂起。
 
-### 4.2 并发数量
+### 4.2 并发数量（已验证）
 
-Pool size 控制并发上限。建议从 **3** 开始：
-- Explorer × 1 page
-- Extractor × 3 pages（最多同时 3 个在跑）
-- 总计 4 pages，资源压力可接受
+**实测结果（Camoufox + Gemini 2.5 Flash）：**
 
-实际合理上限需要实测，Camoufox 对多 page 的支持程度有待验证。
+| 场景 | 并发数 | 壁钟时间 | 成功率 |
+|------|--------|---------|--------|
+| LLM 调用 | 1 | 2.1s | 1/1 |
+| LLM 调用 | 3 | 3.1s | 3/3 |
+| LLM 调用 | 5 | 2.55s | 5/5 |
+| Camoufox page | 1 | 0.78s | 1/1 |
+| Camoufox page | 2 | 1.71s | 2/2 |
+| Camoufox page | 5 | 3.02s | 5/5 |
 
-### 4.3 run_knowledge.json 的写冲突
+**结论：**
+- LLM 层：5 并发与单次延迟几乎相同，完全不是瓶颈
+- Camoufox：原生支持多 page 并发，5 个 page 同时导航不同站点均成功
+- **并发上限建议：3 Extractor + 1 Explorer = 4 pages**，有余量
 
-多个 Extractor 并发写 run_knowledge.json（proven_scripts、schema 等）存在竞态：
+### 4.3 全局记忆迁移到 DB（取代 run_knowledge.json）
 
+**JSON 文件的三个根本缺陷：**
+1. 并发写冲突（多 Extractor 同时写，后写覆盖先写）
+2. Run 结束就消失（`init_run()` 清空 artifacts，proven_scripts 每次从零开始）
+3. 整文件读写（更新一个 key 需要加载整个文件）
+
+**DB 方案：**
+
+```sql
+-- 跨 run 持久化的提取脚本库（按 domain 隔离）
+CREATE TABLE known_scripts (
+    domain        TEXT NOT NULL,
+    url_pattern   TEXT NOT NULL,
+    script        TEXT NOT NULL,
+    success_count INTEGER DEFAULT 0,
+    sample_urls   JSONB DEFAULT '[]',
+    updated_at    TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (domain, url_pattern)
+);
+
+-- per-run 的站点模型和探索状态（run 结束后保留供分析）
+CREATE TABLE run_knowledge (
+    run_id     TEXT REFERENCES runs(id),
+    key        TEXT NOT NULL,
+    value      JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    PRIMARY KEY (run_id, key)
+);
 ```
-Extractor A 读文件 → Extractor B 读文件
-Extractor A 写文件 → Extractor B 覆盖 A 的写入
-```
 
-**解决方案：** 写操作通过 orchestrator 统一处理，Extractor 通过 side-channel 上报结果（已有机制），orchestrator 序列化地写入 run_knowledge.json。Extractor 不直接调用 `write_run_knowledge`，而是在 result 里携带 `proven_script` 字段由 orchestrator 合并写入。
+**核心优势：** `known_scripts` 跨 run 持久化。第二次爬同一个站点时，第一步就查到 proven script，hard-replay 立即生效，不需要任何 LLM 重新发现。
+
+**使用模式：**
+- Session 启动时：从 DB 拉取相关 key → 缓存到本地 dict（热路径只走内存）
+- 写操作：直接打 DB（atomic，并发安全）
+- JSON 文件降级为：仅作本地缓存，不再是 source of truth
 
 ### 4.4 Explorer 读取 Extractor 结果
 
@@ -424,3 +460,14 @@ def explorer_is_done(run_intelligence) -> bool:
 - 两者不直接通信
 - Explorer 写探索发现，Extractor 写提取经验
 - 各自读取对方的输出来指导自己的行为
+
+**决策 13：run_knowledge 从 JSON 文件迁移到 PostgreSQL**
+- JSON 文件无法处理并发写冲突，且 run 间不持久
+- `known_scripts` 表：跨 run 持久化，同一站点第二次爬直接用已验证脚本
+- `run_knowledge` 表：per-run 状态，DB 事务保证原子更新
+- JSON 文件保留为本地读缓存（session 启动时加载一次）
+
+**决策 14：Camoufox 多 page 并发已验证可行**
+- 5 个 page 并发导航不同站点，成功率 100%，壁钟时间 3s
+- LLM 5 并发与单次延迟几乎相同，不是系统瓶颈
+- 生产建议：Explorer 1 page + Extractor pool 3 pages
