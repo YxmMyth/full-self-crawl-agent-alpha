@@ -179,74 +179,104 @@ Explorer 和 Extractor 不直接通信，通过全局记忆协调：
 
 ## 四、并发执行的实现
 
-### 4.1 Orchestrator 的变化
+### 4.1 多 Page 方案（Browser Tab Pool）
 
-```python
-# 现有（顺序）:
-await _run_explorer()         # 等 Explorer 完成
-for url in frontier:          # 然后逐个提取
-    await _run_extractor(url)
+Docker 环境中，Camoufox 作为独立服务运行，Playwright 原生支持在同一 browser 实例内开多个 page（tab）。每个 page 独立导航、独立 DOM，互不干扰，无需启动多个 browser 实例。
 
-# 新（并发）:
-extractor_tasks = set()
-
-async def _exploration_loop():
-    """Explorer 主循环，发现 URL 时立即 dispatch Extractor"""
-    # Explorer session 运行
-    # report_urls() 触发 Extractor dispatch
-    pass
-
-async def _on_url_discovered(url):
-    """URL 进入 frontier 时的回调"""
-    if should_extract_now(url):  # content URL，非 listing
-        task = asyncio.create_task(_run_extractor(url))
-        extractor_tasks.add(task)
-        task.add_done_callback(extractor_tasks.discard)
-
-# 并发运行 Explorer + 已 dispatch 的 Extractors
-await asyncio.gather(
-    _exploration_loop(),
-    # extractor tasks 通过 create_task 自动并发
-)
-
-# 等待所有 Extractor 完成
-await asyncio.gather(*extractor_tasks)
-
-# 最终批量提取阶段（frontier 中剩余 QUEUED URL）
-await _batch_extraction_phase()
+```
+Camoufox browser instance
+├── page_0  →  Explorer（专用，持续运行）
+├── page_1  →  Extractor A（从 pool 获取，用完归还）
+├── page_2  →  Extractor B（从 pool 获取，用完归还）
+└── page_3  →  Extractor C（从 pool 获取，用完归还）
 ```
 
-### 4.2 并发控制
-
-并发 Extractor 数量需要限制（浏览器是共享资源）：
+**Page Pool 设计：**
 
 ```python
-_extractor_semaphore = asyncio.Semaphore(3)  # 最多 3 个并发 Extractor
+class PagePool:
+    def __init__(self, browser, max_pages: int = 3):
+        self._browser = browser
+        self._max = max_pages
+        self._free: asyncio.Queue = asyncio.Queue()
+        self._all_pages: list = []
 
-async def _run_extractor_bounded(url):
-    async with _extractor_semaphore:
-        await _run_extractor(url)
+    async def initialize(self):
+        for _ in range(self._max):
+            page = await self._browser.new_page()
+            await self._free.put(page)
+            self._all_pages.append(page)
+
+    async def acquire(self):
+        """获取一个空闲 page，如果没有则等待"""
+        return await self._free.get()
+
+    async def release(self, page):
+        """归还 page（navigate 到 about:blank 清理状态）"""
+        try:
+            await page.goto("about:blank")
+        except Exception:
+            pass
+        await self._free.put(page)
+
+    async def close_all(self):
+        for page in self._all_pages:
+            await page.close()
 ```
 
-**浏览器共享问题**：多个 Extractor 不能同时使用一个 browser context。
-
-解决方案：
-- **方案 A**：每个 Extractor 用独立 browser tab（playwright 的 new_page()）
-- **方案 B**：Extractor 队列化，但 Explorer 和 Extractor 可以交替执行
-- **方案 C**（最简单）：Explorer 和 Extractor 共用一个 browser，但 Extractor 在 Explorer 的 step 间隙执行
-
-方案 C 最容易实现：Explorer 每完成一步，检查是否有待执行的 Extractor task，执行它，然后继续探索。
-
-### 4.3 Explorer 读取 Extractor 结果
-
-Explorer 周期性（每 N 步）从全局记忆读一次：
+**Orchestrator 的变化：**
 
 ```python
-# 在 Explorer 每第 N 步插入
-if step_number % READ_INTERVAL == 0:
-    extraction_progress = run_intelligence.get_extraction_summary()
-    # 注入到 Explorer 的 think() context:
-    # "已提取 X 条，covering Y 个 section，proven_scripts 有 Z 个 pattern"
+# 初始化
+explorer_page = await browser.new_page()   # Explorer 专用
+pool = PagePool(browser, max_pages=3)
+await pool.initialize()
+
+# Explorer 在 explorer_page 上运行
+# 发现可提取 URL 时，从 pool 获取 page → dispatch Extractor
+
+async def _run_extractor_pooled(url: str):
+    page = await pool.acquire()
+    try:
+        await _run_extractor(url, page=page)
+    finally:
+        await pool.release(page)
+
+# Explorer 发现 URL → 非阻塞 dispatch
+asyncio.create_task(_run_extractor_pooled(url))
+```
+
+**超时保护：** 每个 Extractor session 有 300s 时间上限，超时后 page 强制关闭并从 pool 中替换为新 page。pool 中的 page 不会永久挂起。
+
+### 4.2 并发数量
+
+Pool size 控制并发上限。建议从 **3** 开始：
+- Explorer × 1 page
+- Extractor × 3 pages（最多同时 3 个在跑）
+- 总计 4 pages，资源压力可接受
+
+实际合理上限需要实测，Camoufox 对多 page 的支持程度有待验证。
+
+### 4.3 run_knowledge.json 的写冲突
+
+多个 Extractor 并发写 run_knowledge.json（proven_scripts、schema 等）存在竞态：
+
+```
+Extractor A 读文件 → Extractor B 读文件
+Extractor A 写文件 → Extractor B 覆盖 A 的写入
+```
+
+**解决方案：** 写操作通过 orchestrator 统一处理，Extractor 通过 side-channel 上报结果（已有机制），orchestrator 序列化地写入 run_knowledge.json。Extractor 不直接调用 `write_run_knowledge`，而是在 result 里携带 `proven_script` 字段由 orchestrator 合并写入。
+
+### 4.4 Explorer 读取 Extractor 结果
+
+Explorer 的 task context 每步刷新时注入当前提取进度（来自全局记忆）：
+
+```python
+# 每步构建 task context 时
+knowledge_summary = run_intelligence.get_context_summary()
+# 包含: "已提取 X 条，proven_scripts 有 Y 个 pattern，quality: Z"
+# Explorer 据此判断: 某类 URL 已被摸透，可以少探那个方向
 ```
 
 ---
