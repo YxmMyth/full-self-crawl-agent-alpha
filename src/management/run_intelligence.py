@@ -91,6 +91,15 @@ class RunIntelligence:
             if parent not in knowledge or not isinstance(knowledge[parent], dict):
                 knowledge[parent] = {}
             knowledge[parent][child] = value
+        elif key == "proven_scripts" and isinstance(value, dict):
+            # proven_scripts is accumulated — merge patterns, never replace.
+            # LLM writes individual patterns; record_success() also writes here.
+            existing = knowledge.get("proven_scripts", {})
+            if isinstance(existing, dict):
+                existing.update(value)
+                knowledge["proven_scripts"] = existing
+            else:
+                knowledge["proven_scripts"] = value
         else:
             knowledge[key] = value
 
