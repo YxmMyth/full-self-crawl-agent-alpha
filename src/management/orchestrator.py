@@ -840,7 +840,7 @@ class Orchestrator:
             )
             experience_log.append(entry)
             if len(experience_log) > 3:
-                experience_log = experience_log[-3:]
+                experience_log[:] = experience_log[-3:]  # in-place, no rebind
             prior_experience = "\n---\n".join(experience_log)
 
             if not page_data:
