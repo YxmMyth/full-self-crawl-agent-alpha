@@ -591,8 +591,7 @@ class Orchestrator:
         from .scheduler import SharedFrontier
         from .run_intelligence import RunIntelligence
 
-        all_files = []
-        experience_log: list[str] = []
+        all_files: list = []
         total_pages_extracted = 0
 
         # Seed seen_urls with the start URL
@@ -610,11 +609,12 @@ class Orchestrator:
         seeded = frontier.seed_from_intel(site_intel, url)
         logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
-        async def _run_explorer(failure_context: str | None = None) -> dict:
-            """Run exploration phase, write discovered URLs into frontier."""
-            logger.info(f"Explorer starting (failure_context={'yes' if failure_context else 'no'})")
+        async def _run_explorer(failure_context: str | None = None,
+                               max_steps: int = 30) -> dict:
+            """Run one exploration burst. Returns dict with sections and whether exploration is done."""
+            logger.info(f"Explorer burst starting (failure_context={'yes' if failure_context else 'no'}, max_steps={max_steps})")
             explore_governor = Governor(
-                max_steps=50, max_llm_calls=50, max_time_seconds=300,
+                max_steps=max_steps, max_llm_calls=max_steps, max_time_seconds=300,
                 monitor=RiskMonitor(),
             )
             explore_context = ContextManager(max_history_steps=3)
@@ -674,7 +674,11 @@ class Orchestrator:
                     f"saved as golden records"
                 )
 
-            return {"sections": explore_sections}
+            # Detect if Explorer declared itself done (said TASK COMPLETE)
+            stop_reason = explore_result.get("stop_reason", "")
+            exploration_done = "done" in stop_reason.lower() or "complete" in stop_reason.lower()
+
+            return {"sections": explore_sections, "exploration_done": exploration_done}
 
         async def _run_sampling_loop(sections: list[dict]) -> None:
             """Fallback sampling loop: only processes sections Explorer didn't sample inline."""
@@ -740,60 +744,28 @@ class Orchestrator:
                         len(sub_sections), result.get("summary", "") or stop)
                 logger.info(f"Sampler done: {section_url} → {len(samples)} samples")
 
-        # Phase 1: initial exploration
-        explore_meta = await _run_explorer()
-        discovered_sections = (explore_meta or {}).get("sections", [])
-        await _run_sampling_loop(discovered_sections)
-
-        # Structural completion check: log blueprint state before starting extraction
-        if self._db and self._run_id:
-            try:
-                from ..strategy.gate import StructuralCompletionGate
-                all_secs = await self._db.get_all_sections(self._run_id)
-                unsampled = [s for s in all_secs if not s.get("sampled")]
-                has_script = bool(run_intelligence.read("proven_scripts"))
-                gate = StructuralCompletionGate()
-                decision = gate.check(len(all_secs), len(all_secs) - len(unsampled), has_script)
-                logger.info(f"Structural blueprint: {decision.reason}")
-                if not decision.met and unsampled:
-                    logger.info(
-                        f"{len(unsampled)} section(s) still unsampled — "
-                        f"extraction will proceed with partial blueprint"
-                    )
-            except Exception as e:
-                logger.debug(f"Structural gate check skipped: {e}")
-
-        reexplore_count = 0
+        experience_log: list[str] = []
         prior_experience: str | None = None
 
-        # Event loop: extract URLs from frontier
-        while True:
-            url_record = frontier.next()
-            if url_record is None:
-                logger.info("Frontier exhausted — extraction complete")
-                break
+        async def _extract_one(url_record) -> dict:
+            """Extract one URL: hard-replay or LLM session. Returns result dict."""
+            nonlocal total_pages_extracted, prior_experience
 
-            frontier.mark_in_flight(url_record.url)
             ext_session_id = None
             if self._db and self._run_id:
-                ext_session_id = await self._db.add_session(
-                    self._run_id, "extractor", url_record.url)
+                ext_session_id = await self._db.add_session(self._run_id, "extractor", url_record.url)
             logger.info(
                 f"Extracting {url_record.url} "
                 f"(priority={url_record.priority:.1f}, by={url_record.discovered_by}) "
                 f"| frontier stats: {frontier.stats()}"
             )
 
-            # Align execution environment with task: browser must be on the assigned URL
-            # before the agent starts. This is the orchestrator's responsibility.
             try:
                 await self._browser.navigate(url_record.url, wait_until="domcontentloaded")
             except Exception as e:
                 logger.warning(f"Pre-navigation failed for {url_record.url}: {e} — agent will handle")
 
-            # Hard-replay: if a proven extraction script exists, run it directly
-            # without starting an LLM session. Site-agnostic — the script was
-            # discovered by the LLM on a previous URL; here we just execute it.
+            # Hard-replay: try proven script first, no LLM needed
             proven_script = run_intelligence.get_script_for_url(url_record.url)
             if proven_script:
                 try:
@@ -801,32 +773,25 @@ class Orchestrator:
                     if raw is not None:
                         records = raw if isinstance(raw, list) else [raw]
                         if self._has_extractable_content(records):
-                            frontier.mark_extracted(
-                                url_record.url, len(records), new_data=records)
-                            run_intelligence.record_success(
-                                url_record.url, proven_script, len(records))
+                            frontier.mark_extracted(url_record.url, len(records), new_data=records)
+                            run_intelligence.record_success(url_record.url, proven_script, len(records))
                             run_intelligence.update_coverage(len(frontier.all_data()))
                             self._state_mgr.record_page_visit(task_id, url_record.url)
                             self._state_mgr.add_data(task_id, records)
                             if ext_session_id and self._db:
-                                await self._db.complete_session(
-                                    ext_session_id, "hard_replay", 0, len(records), 0, "")
-                            logger.info(
-                                f"Hard-replay: {url_record.url} → "
-                                f"{len(records)} record(s), no LLM session"
-                            )
+                                await self._db.complete_session(ext_session_id, "hard_replay", 0, len(records), 0, "")
+                            logger.info(f"Hard-replay: {url_record.url} → {len(records)} record(s), no LLM")
                             total_pages_extracted += 1
-                            continue
+                            return {"data": records, "method": "hard_replay"}
                 except Exception as e:
-                    logger.debug(f"Hard-replay failed for {url_record.url}: {e} — falling back to LLM")
+                    logger.debug(f"Hard-replay failed: {e} — falling back to LLM")
 
+            # LLM extraction session
             extract_governor = Governor(
                 max_steps=30, max_llm_calls=30, max_time_seconds=300,
                 gate=CompletionGate(), monitor=RiskMonitor(),
             )
             extract_context = ContextManager(max_history_steps=3)
-            # Build compact site context from Phase 0 intel — gives agent
-            # factual URL patterns to reason from, without classification rules.
             site_ctx_lines = []
             if site_intel:
                 if site_intel.entry_points:
@@ -835,9 +800,6 @@ class Orchestrator:
                 if site_intel.direct_content:
                     dc_urls = [u.url for u in site_intel.direct_content[:5]]
                     site_ctx_lines.append(f"Verified content pages found: {dc_urls}")
-            # Build knowledge summary for this Extractor session
-            knowledge_summary = run_intelligence.get_context_summary()
-            golden_summary = run_intelligence.get_golden_summary()
 
             extract_task = {
                 "url": url_record.url,
@@ -846,52 +808,34 @@ class Orchestrator:
                 "site_context": "\n".join(site_ctx_lines),
                 "prior_experience": prior_experience,
                 "run_intelligence": run_intelligence,
-                "knowledge_summary": knowledge_summary,
-                "golden_summary": golden_summary,
+                "knowledge_summary": run_intelligence.get_context_summary(),
+                "golden_summary": run_intelligence.get_golden_summary(),
             }
             extract_controller = CrawlController(
                 llm_client=self._llm, tools=tools,
                 governor=extract_governor, context_mgr=extract_context,
             )
             result = await extract_controller.run(extract_task)
-            if ext_session_id and self._db:
-                await self._db.complete_session(
-                    ext_session_id,
-                    "success" if result.get("data") else "empty",
-                    result.get("steps", 0), len(result.get("data", [])), 0,
-                    result.get("summary", "") or result.get("stop_reason", ""))
             page_data = result.get("data", [])
             page_files = result.get("files", [])
             all_files.extend(page_files)
-            total_pages_extracted += 1
 
-            # Feed any URLs the extractor discovered back into the frontier.
-            # This enables goal-directed traversal: agent navigates into a
-            # collection/hub page, reports the actual content URLs, and the
-            # system picks them up — no classification needed.
             new_urls = result.get("new_links", [])
             if new_urls:
                 added = frontier.add_batch(new_urls, discovered_by="extractor")
                 logger.info(f"Extractor reported {len(new_urls)} URLs, {added} new in frontier")
 
-            # Write to frontier
             frontier.mark_extracted(url_record.url, len(page_data), new_data=page_data)
             self._state_mgr.record_page_visit(task_id, url_record.url)
             self._state_mgr.add_data(task_id, page_data)
 
             # Update experience log
-            successful_tools = result.get("successful_tools", [])
-            failed_tools = result.get("failed_tools", [])
             stop_reason = result.get("stop_reason", "")
-            metrics = result.get("metrics", {})
-            elapsed = metrics.get("elapsed_seconds", 0)
             steps = result.get("steps", 0)
+            elapsed = result.get("metrics", {}).get("elapsed_seconds", 0)
             entry = (
-                f"Page {total_pages_extracted} ({url_record.url}): "
-                f"{len(page_data)} records, {len(frontier.all_data())} total.\n"
+                f"Page {total_pages_extracted} ({url_record.url}): {len(page_data)} records.\n"
                 f"  stop={stop_reason}, {elapsed:.0f}s, {steps} steps\n"
-                f"  code_that_worked={json.dumps(successful_tools[-3:], default=str, ensure_ascii=False)}\n"
-                f"  failed={json.dumps(failed_tools[-3:], default=str, ensure_ascii=False)}\n"
                 f"  sample={json.dumps(page_data[0], default=str, ensure_ascii=False) if page_data else 'none'}"
             )
             experience_log.append(entry)
@@ -899,63 +843,81 @@ class Orchestrator:
                 experience_log = experience_log[-3:]
             prior_experience = "\n---\n".join(experience_log)
 
-            # Record failure if no data was extracted.
-            # Success is recorded directly in _js_extract_save (more accurate).
             if not page_data:
-                stop_reason_local = result.get("stop_reason", "")
-                run_intelligence.record_failure(
-                    url_record.url, stop_reason_local or "empty result"
-                )
-
-            # Update coverage in run knowledge
+                run_intelligence.record_failure(url_record.url, stop_reason or "empty result")
             run_intelligence.update_coverage(len(frontier.all_data()))
 
-            # Quality check → re-explore if needed
-            sigs = frontier.quality_signals()
-            if sigs.needs_reexplore() and reexplore_count < 2:
-                reexplore_count += 1
-                failure_ctx = frontier.get_failure_summary()
-                logger.info(
-                    f"Quality gate: consecutive_failures={sigs.consecutive_failures}, "
-                    f"empty_rate={sigs.empty_rate:.0%} → re-exploring (round {reexplore_count})"
-                )
-                await _run_explorer(failure_context=failure_ctx)
+            if ext_session_id and self._db:
+                await self._db.complete_session(
+                    ext_session_id, "success" if page_data else "empty",
+                    steps, len(page_data), 0, stop_reason)
+
+            total_pages_extracted += 1
+            return result
+
+        # Interleaved exploration + extraction:
+        # Explorer runs in short bursts (30 steps), then we drain the frontier,
+        # then Explorer runs again — until it declares TASK COMPLETE or max rounds.
+        MAX_EXPLORE_ROUNDS = 4
+        exploration_done = False
+
+        for explore_round in range(1, MAX_EXPLORE_ROUNDS + 1):
+            if exploration_done:
+                break
+            logger.info(f"=== Exploration round {explore_round}/{MAX_EXPLORE_ROUNDS} ===")
+            explore_meta = await _run_explorer(max_steps=30)
+            exploration_done = (explore_meta or {}).get("exploration_done", False)
+
+            # Drain frontier immediately after each Explorer burst
+            round_extracted = 0
+            stop_extraction = False
+            while True:
+                url_record = frontier.next()
+                if url_record is None:
+                    break
+                frontier.mark_in_flight(url_record.url)
+                await _extract_one(url_record)
+                round_extracted += 1
+
+                # Completion check after each extraction
+                all_data_so_far = frontier.all_data()
+                gate_decision = CompletionGate().check(all_data_so_far, spec)
+                if gate_decision.met:
+                    estimated = run_intelligence.get_estimated_total()
+                    if estimated <= 20 or len(all_data_so_far) / max(estimated, 1) >= 0.1:
+                        logger.info(f"Completion gate met: {gate_decision.reason}")
+                        exploration_done = True
+                        stop_extraction = True
+                        break
+
+                # Quality re-explore if needed (only in later rounds)
+                if explore_round >= 2:
+                    sigs = frontier.quality_signals()
+                    if sigs.needs_reexplore():
+                        logger.info("Quality gate triggered mid-round re-explore")
+                        await _run_explorer(failure_context=frontier.get_failure_summary(), max_steps=15)
+
+            logger.info(f"Round {explore_round} done: {round_extracted} extracted, total={len(frontier.all_data())} records")
+            if stop_extraction:
+                break
+
+        # Final drain: process any remaining QUEUED URLs after all exploration rounds
+        while True:
+            url_record = frontier.next()
+            if url_record is None:
+                logger.info("Frontier exhausted — extraction complete")
+                break
+            frontier.mark_in_flight(url_record.url)
+            await _extract_one(url_record)
 
             # Completion gate
             all_data_so_far = frontier.all_data()
-            gate = CompletionGate()
-            decision = gate.check(all_data_so_far, spec)
-            if decision.met:
-                # Additional coverage check: don't stop too early if we know the site is large
-                estimated_total = run_intelligence.get_estimated_total()
-                if estimated_total > 20:
-                    coverage_pct = len(all_data_so_far) / estimated_total
-                    if coverage_pct < 0.1:
-                        logger.info(
-                            f"Completion gate met ({decision.reason}) but coverage only "
-                            f"{coverage_pct:.0%} of ~{estimated_total} — continuing"
-                        )
-                    else:
-                        logger.info(
-                            f"Completion gate met: {decision.reason} "
-                            f"(coverage {coverage_pct:.0%} of ~{estimated_total})"
-                        )
-                        break
-                else:
-                    logger.info(f"Completion gate met: {decision.reason}")
+            gate_decision = CompletionGate().check(all_data_so_far, spec)
+            if gate_decision.met:
+                estimated = run_intelligence.get_estimated_total()
+                if estimated <= 20 or len(all_data_so_far) / max(estimated, 1) >= 0.1:
+                    logger.info(f"Completion gate met: {gate_decision.reason}")
                     break
-
-            # Structural completion: all discovered sections sampled
-            if self._db and self._run_id:
-                try:
-                    unsampled = await self._db.get_unsampled_sections(self._run_id)
-                    if not unsampled:
-                        all_secs = await self._db.get_all_sections(self._run_id)
-                        if all_secs:
-                            logger.info(f"Structural completion: all {len(all_secs)} sections sampled")
-                            break
-                except Exception as e:
-                    logger.warning(f"Structural completion check failed: {e}")
 
         all_data = frontier.all_data()
         stats = frontier.stats()

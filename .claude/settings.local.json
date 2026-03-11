@@ -22,7 +22,9 @@
       "Bash(ls -t artifacts/ 2>/dev/null || dir /b /od artifacts 2>&1 | tail -5)",
       "Bash(find artifacts/ -name \"*.jsonl\" -o -name \"*.json\" 2>/dev/null | head -10)",
       "WebFetch(domain:voyager.minedojo.org)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(docker info:*)",
+      "Bash(docker context:*)"
     ]
   }
 }
