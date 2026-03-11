@@ -200,6 +200,19 @@ class Governor:
                     f"If you're not making progress, try a different strategy."
                 )
 
+        # Post-extraction nudge: after a successful js_extract_save, suggest wrapping up.
+        # This prevents extractors from wandering after they've already got the data.
+        if data is not None and len(data) > 0 and history.count >= 1:
+            recent = history.recent(1)
+            if recent:
+                last_tool = recent[0].tool_call.name
+                last_success = recent[0].result.success if recent[0].result else False
+                if last_tool == "js_extract_save" and last_success:
+                    nudges.append(
+                        "Data extracted from this page. "
+                        "If the extraction task for this URL is complete, say TASK COMPLETE."
+                    )
+
         # Completion gate
         if self.gate and data is not None and spec:
             decision = self.gate.check(data, spec)

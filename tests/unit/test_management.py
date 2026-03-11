@@ -150,6 +150,38 @@ class TestGovernor:
         nudge = g.get_nudges(h, data=data, spec=spec)
         assert nudge and "met" in nudge.lower()
 
+    def test_nudge_after_js_extract_save_success(self):
+        g = Governor(max_steps=30)
+        g.start()
+        h = StepHistory()
+        tc = ToolCall(id="tc0", name="js_extract_save", arguments={"script": "() => ({title: 'x'})"})
+        tr = ToolResult(tool_call_id="tc0", content='{"saved": 1}', success=True)
+        h.record(1, tc, tr)
+        data = [{"title": "x"}]
+        nudge = g.get_nudges(h, data=data)
+        assert nudge is not None
+        assert "TASK COMPLETE" in nudge
+
+    def test_no_post_extraction_nudge_when_data_empty(self):
+        g = Governor(max_steps=30)
+        g.start()
+        h = StepHistory()
+        tc = ToolCall(id="tc0", name="js_extract_save", arguments={"script": "() => ({title: 'x'})"})
+        tr = ToolResult(tool_call_id="tc0", content='{"saved": 1}', success=True)
+        h.record(1, tc, tr)
+        nudge = g.get_nudges(h, data=[])  # empty data — no extraction happened
+        assert nudge is None or "TASK COMPLETE" not in nudge
+
+    def test_no_post_extraction_nudge_for_other_tools(self):
+        g = Governor(max_steps=30)
+        g.start()
+        h = StepHistory()
+        tc = ToolCall(id="tc0", name="navigate", arguments={"url": "https://x.com"})
+        tr = ToolResult(tool_call_id="tc0", content='{"ok": true}', success=True)
+        h.record(1, tc, tr)
+        nudge = g.get_nudges(h, data=[{"title": "x"}])
+        assert nudge is None or "TASK COMPLETE" not in nudge
+
 
 class TestContextManager:
     def test_build_basic(self):

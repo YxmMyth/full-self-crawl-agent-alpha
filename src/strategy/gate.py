@@ -92,3 +92,62 @@ class CompletionGate:
             total_score += filled / len(field_names)
 
         return total_score / len(data)
+
+
+class StructuralCompletionGate:
+    """Completion gate for Explorer phase based on section sampling completeness.
+
+    Explorer is done when all discovered sections are sampled AND a proven
+    extraction script exists in run_knowledge.
+
+    Falls back gracefully: if no sections discovered, gate never triggers
+    (Governor time/step limits govern instead).
+    """
+
+    def check(self, sections_found: int, sections_sampled: int,
+              has_proven_script: bool) -> GateDecision:
+        """Check if Explorer has completed its structural mapping mission.
+
+        Args:
+            sections_found: Sections registered via report_sections()
+            sections_sampled: Sections where js_extract_save succeeded
+            has_proven_script: Whether run_knowledge has a proven_scripts entry
+
+        Returns:
+            GateDecision where current_items = sections_sampled,
+            current_quality = fraction of sections sampled.
+        """
+        if sections_found == 0:
+            return GateDecision(
+                met=False,
+                reason="No sections discovered yet",
+                current_items=0,
+                current_quality=0.0,
+            )
+
+        sampled_fraction = sections_sampled / sections_found
+        all_sampled = sections_sampled >= sections_found
+
+        if all_sampled and has_proven_script:
+            return GateDecision(
+                met=True,
+                reason=(
+                    f"Blueprint complete: {sections_sampled}/{sections_found} "
+                    f"sections sampled, proven script exists"
+                ),
+                current_items=sections_sampled,
+                current_quality=sampled_fraction,
+            )
+
+        reasons = []
+        if not all_sampled:
+            reasons.append(f"sections {sections_sampled}/{sections_found} sampled")
+        if not has_proven_script:
+            reasons.append("no proven extraction script yet")
+
+        return GateDecision(
+            met=False,
+            reason=f"Blueprint incomplete: {', '.join(reasons)}",
+            current_items=sections_sampled,
+            current_quality=sampled_fraction,
+        )

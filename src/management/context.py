@@ -67,58 +67,59 @@ class ContextManager:
         role = task.get("role", "extraction")
 
         if role == "exploration":
-            role_text = """You are a URL discovery agent.
+            role_text = """You are a site intelligence agent for exploration.
 
-Mission: find URLs of pages that contain the target data, then report them with report_urls() inside execute_code.
+Mission: understand this site well enough to produce a complete extraction blueprint —
+not a list of URLs, but a verified understanding of where data lives and how to get it.
 
-## MANDATORY FIRST TWO STEPS (do these before anything else)
+## Step 1 (mandatory first action): Write your initial site model
 
-Step 1: Read your Site Intelligence briefing in the task context (entry points, direct content, sitemap).
-Step 2: Call write_run_knowledge('site_model', {...}) with your initial assessment:
-  {
-    "structure": "describe what you see, e.g. listing: /tag/*, content: /pen/[slug]",
-    "estimated_total": N,        # rough estimate of how many target items exist
-    "estimation_basis": "from briefing / search results / pagination",
-    "content_url_pattern": "/pen/[slug]",   # URL pattern for content pages
-    "extraction_hint": "js_extract_save — code likely in JS editor, not static HTML"
-  }
+Call write_run_knowledge('site_model', {
+  "structure": "e.g. listing: /tag/*, content: /pen/[slug]",
+  "estimated_total": N,
+  "estimation_basis": "from briefing / pagination / search results",
+  "content_url_pattern": "/pen/[a-zA-Z0-9]+",
+  "extraction_hint": "where data lives on content pages"
+})
 
-Write this even if your estimate is rough. You can refine it later.
-This ensures Phase 2 agents start with your understanding even if you run out of steps.
+Write this even if rough — refine as you learn more.
 
-## Then: URL discovery strategy (macro → micro)
+## Step 2: Map sections and sample each one inline
 
-3. If the briefing is incomplete, use your tools to fill gaps:
-   - search_site(query) — search within the domain. Call multiple times with different keywords
-   - probe_endpoint(path) — HTTP HEAD check: does /topics/threejs exist? (fast, no browser)
-   - navigate + analyze_links() — see what's actually rendered
-   - bash — curl REST APIs, fetch sitemaps, hit JSON endpoints
+For each area of the site that may contain target data:
 
-## Reporting URLs
+1. Navigate to it, call think(): is this a listing (items visible) or directory (links to sub-sections)?
+2. Call report_sections([{url, title, agent_type, estimated_items}]) to register it in the map.
+   agent_type: "listing" if items are directly visible, "directory" if links to sub-sections.
+3. If items are directly visible here: call js_extract_save() with a 1-record script RIGHT NOW.
+   This is the sampling step — validates the extraction method works.
+   Do not navigate away first. Sample inline, then continue exploring.
+4. If it links to sub-sections: navigate into them and repeat from step 1.
 
-Call report_urls([url1, url2, ...]) inside execute_code as SOON as you find promising URLs.
-Do NOT accumulate URLs and report once at the end — report incrementally as you discover them.
-This way, even if your exploration is cut short, your findings are preserved.
+## Step 3: Report individual content URLs as you find them
 
-## Reporting section pages
+When you see individual content URLs (not section pages), call report_urls() inside execute_code.
+Report incrementally — do not wait until the end.
 
-If you find a page that organizes or indexes target data (a tag page, category, archive, collection),
-call report_sections([{url, title, agent_type, estimated_items}]) inside execute_code.
-agent_type: 'listing' if items are directly visible, 'directory' if it links to sub-sections.
-The system will then sample these sections automatically.
+## Tools for discovery
 
-## Opportunistic extraction (optional, bounded)
+- search_site(query) — find pages within this domain
+- probe_endpoint(path) — HTTP HEAD check for path existence (fast)
+- navigate + analyze_links() — read rendered DOM links
+- bash — curl APIs, fetch sitemaps, hit JSON endpoints
 
-You MAY extract a 1-record sample from a URL to validate content quality. This is optional but useful.
-If you do extract a sample:
-  1. Extract just 1 record (to confirm the page has the target data)
-  2. Immediately ALSO call report_urls([current_url]) in the same execute_code call
-  3. Do NOT spend many steps extracting all records — that is Phase 2's job
+## After a successful sampling
 
-## When to stop
+When js_extract_save() saves a record from a content page:
+  write_run_knowledge('proven_scripts', {
+    'URL_PATTERN': {'script': 'YOUR_JS_ARROW_FUNCTION', 'verified_on': 'URL'}
+  })
 
-Once you have enough target URLs reported, you're done.
-If truly nothing found after 3+ different approaches, call report_urls([]) with a summary."""
+## When you are done
+
+You are done when: every section you discovered has been sampled (js_extract_save succeeded),
+and run_knowledge has a proven extraction script. Say "TASK COMPLETE" with a one-paragraph
+summary: sections found, extraction method, estimated total content."""
 
             feedback = task.get("feedback")
             if feedback:
@@ -150,22 +151,23 @@ Budget: 15 steps. Extract 2-3 records only — do not paginate or exhaust the pa
 
 Mission: find and extract the target data. Your starting URL may or may not be where the data lives — observe the page and follow the evidence toward your goal.
 
-## Start with Run Knowledge
+## Start with the extraction blueprint
 
-Call read_run_knowledge() as your FIRST action. It contains:
-- proven_scripts: JS arrow functions already known to work for URL patterns like yours
+Check the task context for a "Verified extraction script" block — if present, call
+js_extract_save() with that script as your FIRST action. If it saves records, say TASK COMPLETE.
+
+If no verified script is shown, call read_run_knowledge() first. It contains:
+- proven_scripts: JS arrow functions verified to work for URL patterns like yours
 - site_model: structure, estimated total items, content URL patterns
-- golden_records (via golden_summary in task context): what good data looks like
 
-If proven_scripts has a match for your URL pattern → use it directly as the script argument
-to js_extract_save(). Skip trial-and-error.
+If proven_scripts has a match → use it directly as the js_extract_save() argument.
 
-IMPORTANT: proven_scripts contains data EXTRACTION code only — JS arrow functions like
+proven_scripts contains EXTRACTION code only — JS arrow functions like
   '() => ({title: document.title, code: ..., author: ...})'
-NOT URL discovery code. If you find a working extraction script, write it back:
-  write_run_knowledge('proven_scripts', {'*/pen/*': {'script': '() => ({title: ..., code: ...})'}})
+If you discover a working script, write it back:
+  write_run_knowledge('proven_scripts', {'URL_PATTERN': {'script': 'YOUR_SCRIPT'}})
 
-If the task context shows a ⚡ verified skill for this URL, call it first — it was verified to work.
+If the task context shows a ⚡ verified skill for this URL, call it first.
 
 ## Observe before acting
 
@@ -275,8 +277,14 @@ Rules:
             progress_lines = ["\nCurrent progress:"]
 
             if role == "exploration":
+                sections_found = progress.get("sections_found", 0)
+                sections_sampled = progress.get("sections_sampled", 0)
+                if sections_found:
+                    progress_lines.append(f"- Sections discovered: {sections_found}")
+                    progress_lines.append(f"- Sections sampled: {sections_sampled}/{sections_found}")
                 urls_found = progress.get("urls_found", 0)
-                progress_lines.append(f"- Target URLs found: {urls_found}")
+                if urls_found:
+                    progress_lines.append(f"- Content URLs reported: {urls_found}")
             else:
                 collected = progress.get("records_collected", 0)
                 target_note = f" (target: ≥{min_items})" if min_items else ""
@@ -363,6 +371,24 @@ Rules:
         golden_summary = task.get("golden_summary", "")
         if golden_summary:
             parts.append(f"\n{golden_summary}")
+
+        # Proven script injection: surface the verified extraction script directly
+        # in task context so extractor sees it without needing to call read_run_knowledge.
+        # Position matters — injected just before history, in the recency zone.
+        if role == "extraction":
+            run_intelligence = task.get("run_intelligence")
+            current_url = task.get("url", "")
+            if run_intelligence and current_url:
+                try:
+                    proven_script = run_intelligence.get_script_for_url(current_url)
+                    if proven_script:
+                        parts.append(
+                            f"\nVerified extraction script for this URL pattern:\n"
+                            f"```javascript\n{proven_script[:800]}\n```\n"
+                            f"Call js_extract_save() with this script as your first action."
+                        )
+                except Exception:
+                    pass  # Never block on this
 
         # Prior experience from previous pages
         prior = task.get("prior_experience")

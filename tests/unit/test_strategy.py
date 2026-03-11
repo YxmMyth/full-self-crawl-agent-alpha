@@ -5,7 +5,7 @@ Unit tests for strategy layer: CrawlSpec, SpecInferrer, PolicyManager, Completio
 import pytest
 from src.strategy.spec import CrawlSpec, SpecLoader, _safe_parse_json
 from src.strategy.policy import PolicyManager
-from src.strategy.gate import CompletionGate, GateDecision
+from src.strategy.gate import CompletionGate, GateDecision, StructuralCompletionGate
 
 
 class TestCrawlSpec:
@@ -114,3 +114,39 @@ class TestCompletionGate:
         dec = gate.check([], spec)
         assert dec.met is False
         assert dec.current_quality == 0.0
+
+
+class TestStructuralCompletionGate:
+    def test_met_when_all_sections_sampled_with_script(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=3, sections_sampled=3, has_proven_script=True)
+        assert dec.met is True
+        assert "Blueprint complete" in dec.reason
+
+    def test_not_met_when_no_sections(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=0, sections_sampled=0, has_proven_script=False)
+        assert dec.met is False
+        assert dec.current_quality == 0.0
+
+    def test_not_met_when_missing_script(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=2, sections_sampled=2, has_proven_script=False)
+        assert dec.met is False
+        assert "proven" in dec.reason
+
+    def test_not_met_when_sections_not_all_sampled(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=4, sections_sampled=2, has_proven_script=True)
+        assert dec.met is False
+        assert "2/4" in dec.reason
+
+    def test_quality_is_fraction(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=4, sections_sampled=2, has_proven_script=True)
+        assert dec.current_quality == 0.5
+
+    def test_met_single_section(self):
+        gate = StructuralCompletionGate()
+        dec = gate.check(sections_found=1, sections_sampled=1, has_proven_script=True)
+        assert dec.met is True

@@ -296,7 +296,7 @@ class CrawlController:
         """Compute progress stats for context injection."""
         time_elapsed = round(self.governor.elapsed_seconds, 1)
         time_remaining = round(max(0, self.governor.max_time_seconds - self.governor.elapsed_seconds), 1)
-        return {
+        progress = {
             "role": task.get("role", "extraction"),
             "records_collected": len(self._collected_data),
             "files_collected": len(self._collected_files),
@@ -307,6 +307,15 @@ class CrawlController:
             "time_elapsed": time_elapsed,
             "time_remaining": time_remaining,
         }
+        # For exploration role, expose section counts for structural progress display
+        if task.get("role") == "exploration":
+            progress["sections_found"] = len(self._collected_sections)
+            # Sampled = sections where we also collected data inline
+            progress["sections_sampled"] = sum(
+                1 for s in self._collected_sections
+                if s.get("sampled")
+            )
+        return progress
 
     def _summarize_fields(self) -> str | None:
         """Summarize field coverage across collected records."""
@@ -409,6 +418,11 @@ class CrawlController:
                     current_url = self._task.get("current_url", "")
                     if current_url:
                         self._sampled_urls.add(current_url.split("#")[0].rstrip("/"))
+                    # Mark the most recent unsampled section as sampled (inline sampling)
+                    for sec in reversed(self._collected_sections):
+                        if not sec.get("sampled"):
+                            sec["sampled"] = True
+                            break
             if urls:
                 new_links.extend(urls)
                 data["_reported"] = f"{len(urls)} URLs reported via report_urls()"
