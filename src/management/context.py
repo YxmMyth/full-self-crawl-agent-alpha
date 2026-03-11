@@ -100,6 +100,13 @@ Call report_urls([url1, url2, ...]) inside execute_code as SOON as you find prom
 Do NOT accumulate URLs and report once at the end — report incrementally as you discover them.
 This way, even if your exploration is cut short, your findings are preserved.
 
+## Reporting section pages
+
+If you find a page that organizes or indexes target data (a tag page, category, archive, collection),
+call report_sections([{url, title, agent_type, estimated_items}]) inside execute_code.
+agent_type: 'listing' if items are directly visible, 'directory' if it links to sub-sections.
+The system will then sample these sections automatically.
+
 ## Opportunistic extraction (optional, bounded)
 
 You MAY extract a 1-record sample from a URL to validate content quality. This is optional but useful.
@@ -125,6 +132,19 @@ If truly nothing found after 3+ different approaches, call report_urls([]) with 
             frontier_summary = task.get("frontier_summary")
             if frontier_summary:
                 role_text += f"\n\nQuality feedback from extraction phase:\n{frontier_summary}"
+        elif role == "sampler":
+            role_text = """You are a Section Sampler.
+
+Mission: extract 2-3 representative records from this page to establish data quality.
+The orchestrator has already navigated here. Do not call navigate() first.
+
+1. Call think(): does this page show items directly, or links to sub-pages?
+2a. Items directly visible → use js_extract_save() to extract 2-3 records
+2b. Sub-pages only → call analyze_links() to find them, call report_urls() to queue
+3. Say "SAMPLING COMPLETE" with a one-sentence summary
+
+Budget: 15 steps. Extract 2-3 records only — do not paginate or exhaust the page."""
+
         else:
             role_text = """You are a goal-pursuing data agent.
 
@@ -287,7 +307,7 @@ Rules:
         # Extraction mode: extraction-role skills (JS code)
         # Exploration mode: exploration-role skills (navigation guidance)
         role = task.get("role", "extraction")
-        if role in ("extraction", "exploration"):
+        if role in ("extraction", "exploration", "sampler"):
             try:
                 from ..tools.skill_library import SkillLibrary
                 _lib = SkillLibrary()

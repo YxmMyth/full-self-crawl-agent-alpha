@@ -44,6 +44,7 @@ class CrawlController:
         self._collected_files: list[dict] = []
         self._discovered_urls: list[str] = []
         self._sampled_urls: set[str] = set()  # URLs where save_records() was called during exploration
+        self._collected_sections: list[dict] = []
         self._task: dict = {}  # set at run() start
 
     async def run(self, task: dict) -> dict:
@@ -214,6 +215,7 @@ class CrawlController:
             "summary": summary,
             "new_links": new_links,
             "sampled_urls": self._sampled_urls,
+            "sections": self._collected_sections,
             "successful_tools": self._extract_successful_tools(),
             "failed_tools": self._extract_failed_tools(),
             "metrics": {
@@ -396,6 +398,7 @@ class CrawlController:
             records = data.pop("_records", [])
             urls = data.pop("_urls", [])
             files = data.pop("_files", [])
+            sections = data.pop("_sections", [])
 
             if records:
                 self._collected_data.extend(records)
@@ -414,8 +417,12 @@ class CrawlController:
                 self._collected_files.extend(files)
                 data["_files_saved"] = f"{len(files)} files saved via save_file()"
                 logger.info(f"Side-channel: collected {len(files)} file artifacts from execute_code")
+            if sections:
+                self._collected_sections.extend(sections)
+                data["_sections_reported"] = f"{len(sections)} sections"
+                logger.info(f"Side-channel: {len(sections)} sections collected")
 
-            if records or urls or files:
+            if records or urls or files or sections:
                 result.content = json.dumps(data, default=str, ensure_ascii=False)
         except (json.JSONDecodeError, TypeError):
             pass

@@ -9,10 +9,12 @@ Multiple agent containers can write concurrently; an orchestrator or UI reads.
 Falls back gracefully when DATABASE_URL is not configured.
 """
 
+import hashlib
 import json
 import logging
 import os
 import socket
+import uuid
 from datetime import datetime, timezone
 from typing import Any
 
@@ -44,6 +46,53 @@ CREATE INDEX IF NOT EXISTS records_run_id_idx    ON records(run_id);
 CREATE INDEX IF NOT EXISTS records_source_url_idx ON records(source_url);
 CREATE INDEX IF NOT EXISTS records_crawled_at_idx ON records(crawled_at);
 CREATE INDEX IF NOT EXISTS records_data_gin_idx   ON records USING GIN(data);
+
+CREATE TABLE IF NOT EXISTS sections (
+    id                   TEXT PRIMARY KEY,
+    run_id               TEXT REFERENCES runs(id),
+    url                  TEXT NOT NULL,
+    title                TEXT,
+    agent_type           TEXT,
+    estimated_items      INTEGER,
+    estimation_confidence TEXT,
+    structure_explored   BOOLEAN DEFAULT FALSE,
+    sampled              BOOLEAN DEFAULT FALSE,
+    discovered_at        TIMESTAMPTZ DEFAULT NOW(),
+    UNIQUE(run_id, url)
+);
+
+CREATE TABLE IF NOT EXISTS samples (
+    id          BIGSERIAL PRIMARY KEY,
+    section_id  TEXT REFERENCES sections(id),
+    run_id      TEXT REFERENCES runs(id),
+    data        JSONB NOT NULL,
+    sampled_at  TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS url_section (
+    url         TEXT NOT NULL,
+    section_id  TEXT REFERENCES sections(id),
+    run_id      TEXT REFERENCES runs(id),
+    PRIMARY KEY (url, section_id)
+);
+
+CREATE TABLE IF NOT EXISTS sessions (
+    id                  TEXT PRIMARY KEY,
+    run_id              TEXT REFERENCES runs(id),
+    role                TEXT,
+    assigned_url        TEXT,
+    started_at          TIMESTAMPTZ DEFAULT NOW(),
+    ended_at            TIMESTAMPTZ,
+    outcome             TEXT,
+    steps_taken         INTEGER,
+    records_count       INTEGER DEFAULT 0,
+    sections_found      INTEGER DEFAULT 0,
+    trajectory_summary  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS sections_run_id_idx ON sections(run_id);
+CREATE INDEX IF NOT EXISTS sections_sampled_idx ON sections(run_id, sampled);
+CREATE INDEX IF NOT EXISTS sessions_run_id_idx ON sessions(run_id);
 """
 
 
@@ -150,3 +199,115 @@ class HistoryDB:
         except Exception as e:
             logger.warning(f"HistoryDB.save_records failed: {e}")
         return inserted
+
+    async def upsert_section(self, run_id: str, section_dict: dict) -> str | None:
+        """Insert or update a discovered section. Returns section id."""
+        if not self.available:
+            return None
+        url = section_dict.get("url", "")
+        if not url:
+            return None
+        section_id = hashlib.sha1(f"{run_id}:{url}".encode()).hexdigest()[:16]
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO sections (id, run_id, url, title, agent_type, estimated_items, estimation_confidence)
+                    VALUES ($1, $2, $3, $4, $5, $6, $7)
+                    ON CONFLICT (run_id, url) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        agent_type = EXCLUDED.agent_type,
+                        estimated_items = EXCLUDED.estimated_items,
+                        estimation_confidence = EXCLUDED.estimation_confidence
+                """, section_id, run_id, url,
+                    section_dict.get("title"), section_dict.get("agent_type"),
+                    section_dict.get("estimated_items"), section_dict.get("estimation_confidence"))
+            return section_id
+        except Exception as e:
+            logger.warning(f"HistoryDB.upsert_section failed: {e}")
+            return None
+
+    async def mark_section_sampled(self, run_id: str, url: str,
+                                    sample_records: list[dict]) -> None:
+        """Mark section sampled and persist up to 3 sample records."""
+        if not self.available:
+            return
+        section_id = hashlib.sha1(f"{run_id}:{url}".encode()).hexdigest()[:16]
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE sections SET sampled=TRUE WHERE run_id=$1 AND url=$2",
+                    run_id, url)
+                for rec in sample_records[:3]:
+                    await conn.execute(
+                        "INSERT INTO samples (section_id, run_id, data) VALUES ($1, $2, $3::jsonb)",
+                        section_id, run_id,
+                        json.dumps(rec, ensure_ascii=False, default=str))
+        except Exception as e:
+            logger.warning(f"HistoryDB.mark_section_sampled failed: {e}")
+
+    async def mark_section_explored(self, run_id: str, url: str) -> None:
+        if not self.available:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "UPDATE sections SET structure_explored=TRUE WHERE run_id=$1 AND url=$2",
+                    run_id, url)
+        except Exception as e:
+            logger.warning(f"HistoryDB.mark_section_explored failed: {e}")
+
+    async def get_unsampled_sections(self, run_id: str) -> list[dict]:
+        if not self.available:
+            return []
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, url, title, agent_type, estimated_items "
+                    "FROM sections WHERE run_id=$1 AND sampled=FALSE ORDER BY discovered_at",
+                    run_id)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"HistoryDB.get_unsampled_sections failed: {e}")
+            return []
+
+    async def get_all_sections(self, run_id: str) -> list[dict]:
+        if not self.available:
+            return []
+        try:
+            async with self._pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, url, title, agent_type, estimated_items, sampled "
+                    "FROM sections WHERE run_id=$1 ORDER BY discovered_at",
+                    run_id)
+                return [dict(r) for r in rows]
+        except Exception as e:
+            logger.warning(f"HistoryDB.get_all_sections failed: {e}")
+            return []
+
+    async def add_session(self, run_id: str, role: str, url: str) -> str | None:
+        if not self.available:
+            return None
+        session_id = str(uuid.uuid4())[:16]
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute(
+                    "INSERT INTO sessions (id, run_id, role, assigned_url) VALUES ($1,$2,$3,$4)",
+                    session_id, run_id, role, url)
+            return session_id
+        except Exception as e:
+            logger.warning(f"HistoryDB.add_session failed: {e}")
+            return None
+
+    async def complete_session(self, session_id: str, outcome: str, steps: int,
+                                records: int, sections: int, summary: str) -> None:
+        if not self.available or not session_id:
+            return
+        try:
+            async with self._pool.acquire() as conn:
+                await conn.execute("""
+                    UPDATE sessions SET ended_at=NOW(), outcome=$2, steps_taken=$3,
+                        records_count=$4, sections_found=$5, trajectory_summary=$6
+                    WHERE id=$1
+                """, session_id, outcome, steps, records, sections, summary)
+        except Exception as e:
+            logger.warning(f"HistoryDB.complete_session failed: {e}")

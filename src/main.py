@@ -83,7 +83,7 @@ async def main():
     run_id = str(uuid.uuid4())
     await db.begin_run(run_id, args.url, args.mode, args.model, args.requirement)
 
-    orchestrator = Orchestrator(config=config)
+    orchestrator = Orchestrator(config=config, db=db, run_id=run_id)
 
     try:
         result = await orchestrator.run(
@@ -92,9 +92,7 @@ async def main():
             mode=args.mode,
         )
 
-        records = result.get("data", [])
-        await db.save_records(run_id, records)
-        await db.complete_run(run_id, result.get("success", False), len(records))
+        await db.complete_run(run_id, result.get("success", False), len(result.get("data", [])))
         await db.close()
 
         # Save output — use ARTIFACTS_DIR parent as base when path is relative,

@@ -189,3 +189,30 @@ class TestContextManager:
                 "spec": CrawlSpec(url="x", requirement="y")}
         msgs = cm.build(task, StepHistory(), [])
         assert "exploration" in msgs[0]["content"].lower() or "exploring" in msgs[0]["content"].lower() or "reconnaissance" in msgs[0]["content"].lower()
+
+
+class TestContextManagerSamplerRole:
+    def test_sampler_role_has_distinct_prompt(self):
+        cm = ContextManager()
+        task = {"url": "x", "role": "sampler",
+                "spec": CrawlSpec(url="x", requirement="y")}
+        msgs = cm.build(task, StepHistory(), [])
+        system_content = msgs[0]["content"]
+        assert "Sampler" in system_content or "sampler" in system_content
+
+    def test_sampler_prompt_no_navigate_instruction(self):
+        cm = ContextManager()
+        task = {"url": "x", "role": "sampler",
+                "spec": CrawlSpec(url="x", requirement="y")}
+        msgs = cm.build(task, StepHistory(), [])
+        system_content = msgs[0]["content"]
+        # Should tell agent NOT to call navigate() first
+        assert "Do not call navigate" in system_content or "already navigated" in system_content
+
+    def test_sampler_prompt_contains_sampling_complete(self):
+        cm = ContextManager()
+        task = {"url": "x", "role": "sampler",
+                "spec": CrawlSpec(url="x", requirement="y")}
+        msgs = cm.build(task, StepHistory(), [])
+        system_content = msgs[0]["content"]
+        assert "SAMPLING COMPLETE" in system_content

@@ -47,7 +47,7 @@ class Orchestrator:
     5. Compile and return results
     """
 
-    def __init__(self, config: dict | None = None):
+    def __init__(self, config: dict | None = None, db=None, run_id: str | None = None):
         # Auto-load .env file
         try:
             from dotenv import load_dotenv
@@ -78,6 +78,8 @@ class Orchestrator:
         self._frontier = None
         # Run-level knowledge accumulation (set in _run_full_site).
         self._run_intelligence = None
+        self._db = db          # HistoryDB | None
+        self._run_id = run_id  # run UUID from main.py
 
     async def run(self, start_url: str, requirement: str = "",
                   spec_dict: dict | None = None,
@@ -608,7 +610,7 @@ class Orchestrator:
         seeded = frontier.seed_from_intel(site_intel, url)
         logger.info(f"SharedFrontier seeded: {seeded} URLs from Phase 0")
 
-        async def _run_explorer(failure_context: str | None = None) -> None:
+        async def _run_explorer(failure_context: str | None = None) -> dict:
             """Run exploration phase, write discovered URLs into frontier."""
             logger.info(f"Explorer starting (failure_context={'yes' if failure_context else 'no'})")
             explore_governor = Governor(
@@ -628,6 +630,13 @@ class Orchestrator:
                 governor=explore_governor, context_mgr=explore_context,
             )
             explore_result = await explore_controller.run(explore_task)
+
+            # Write discovered sections to DB
+            explore_sections = explore_result.get("sections", [])
+            if explore_sections and self._db and self._run_id:
+                for sec in explore_sections:
+                    await self._db.upsert_section(self._run_id, sec)
+                logger.info(f"Explorer: {len(explore_sections)} sections written to DB")
 
             # Ingest discovered URLs into frontier
             discovered = explore_result.get("new_links", [])
@@ -655,8 +664,64 @@ class Orchestrator:
                     f"saved as golden records"
                 )
 
+            return {"sections": explore_sections}
+
+        async def _run_sampling_loop(sections: list[dict]) -> None:
+            """Orchestrator-driven loop: sample 2-3 records from each discovered section."""
+            if not sections:
+                return
+            logger.info(f"Sampling loop: {len(sections)} sections to sample")
+            for section in sections:
+                section_url = section.get("url", "")
+                if not section_url:
+                    continue
+                logger.info(f"Sampling: {section_url}")
+                try:
+                    await self._browser.navigate(section_url, wait_until="domcontentloaded")
+                except Exception as e:
+                    logger.warning(f"Sampler pre-navigation failed for {section_url}: {e}")
+                session_id = None
+                if self._db and self._run_id:
+                    session_id = await self._db.add_session(self._run_id, "sampler", section_url)
+                sampler_gov = Governor(max_steps=15, max_llm_calls=15,
+                                       max_time_seconds=120, monitor=RiskMonitor())
+                sampler_ctx = ContextManager(max_history_steps=2)
+                sampler_task = {
+                    "url": section_url,
+                    "spec": spec,
+                    "role": "sampler",
+                    "knowledge_summary": run_intelligence.get_context_summary(),
+                }
+                sampler_ctrl = CrawlController(
+                    llm_client=self._llm, tools=tools,
+                    governor=sampler_gov, context_mgr=sampler_ctx,
+                )
+                result = await sampler_ctrl.run(sampler_task)
+                samples = result.get("data", [])[:3]
+                stop = result.get("stop_reason", "")
+                if self._db and self._run_id:
+                    await self._db.mark_section_sampled(self._run_id, section_url, samples)
+                if samples:
+                    frontier.mark_extracted(section_url, len(samples), new_data=samples)
+                    run_intelligence.save_golden_records(samples)
+                new_links = result.get("new_links", [])
+                if new_links:
+                    frontier.add_batch(new_links, discovered_by="sampler")
+                sub_sections = result.get("sections", [])
+                for sub in sub_sections:
+                    if self._db and self._run_id:
+                        await self._db.upsert_section(self._run_id, sub)
+                if session_id and self._db:
+                    await self._db.complete_session(
+                        session_id, "success" if samples else "empty",
+                        result.get("steps", 0), len(samples),
+                        len(sub_sections), result.get("summary", "") or stop)
+                logger.info(f"Sampler done: {section_url} → {len(samples)} samples")
+
         # Phase 1: initial exploration
-        await _run_explorer()
+        explore_meta = await _run_explorer()
+        discovered_sections = (explore_meta or {}).get("sections", [])
+        await _run_sampling_loop(discovered_sections)
 
         reexplore_count = 0
         prior_experience: str | None = None
@@ -669,11 +734,22 @@ class Orchestrator:
                 break
 
             frontier.mark_in_flight(url_record.url)
+            ext_session_id = None
+            if self._db and self._run_id:
+                ext_session_id = await self._db.add_session(
+                    self._run_id, "extractor", url_record.url)
             logger.info(
                 f"Extracting {url_record.url} "
                 f"(priority={url_record.priority:.1f}, by={url_record.discovered_by}) "
                 f"| frontier stats: {frontier.stats()}"
             )
+
+            # Align execution environment with task: browser must be on the assigned URL
+            # before the agent starts. This is the orchestrator's responsibility.
+            try:
+                await self._browser.navigate(url_record.url, wait_until="domcontentloaded")
+            except Exception as e:
+                logger.warning(f"Pre-navigation failed for {url_record.url}: {e} — agent will handle")
 
             extract_governor = Governor(
                 max_steps=30, max_llm_calls=30, max_time_seconds=300,
@@ -709,6 +785,12 @@ class Orchestrator:
                 governor=extract_governor, context_mgr=extract_context,
             )
             result = await extract_controller.run(extract_task)
+            if ext_session_id and self._db:
+                await self._db.complete_session(
+                    ext_session_id,
+                    "success" if result.get("data") else "empty",
+                    result.get("steps", 0), len(result.get("data", [])), 0,
+                    result.get("summary", "") or result.get("stop_reason", ""))
             page_data = result.get("data", [])
             page_files = result.get("files", [])
             all_files.extend(page_files)
@@ -794,8 +876,28 @@ class Orchestrator:
                     logger.info(f"Completion gate met: {decision.reason}")
                     break
 
+            # Structural completion: all discovered sections sampled
+            if self._db and self._run_id:
+                try:
+                    unsampled = await self._db.get_unsampled_sections(self._run_id)
+                    if not unsampled:
+                        all_secs = await self._db.get_all_sections(self._run_id)
+                        if all_secs:
+                            logger.info(f"Structural completion: all {len(all_secs)} sections sampled")
+                            break
+                except Exception as e:
+                    logger.warning(f"Structural completion check failed: {e}")
+
         all_data = frontier.all_data()
         stats = frontier.stats()
+
+        # Build sections summary for output
+        all_secs = []
+        if self._db and self._run_id:
+            try:
+                all_secs = await self._db.get_all_sections(self._run_id)
+            except Exception:
+                pass
 
         # Track files in artifact manager
         if self._artifacts and all_files:
@@ -807,12 +909,15 @@ class Orchestrator:
             "data": all_data,
             "files": all_files,
             "pages_extracted": total_pages_extracted,
+            "sections": {s["url"]: s for s in all_secs},
             "summary": f"Extracted {len(all_data)} records{file_summary} from {total_pages_extracted} pages",
             "metrics": {
                 "pages_found": stats["total_urls"],
                 "pages_extracted": total_pages_extracted,
                 "records": len(all_data),
                 "files": len(all_files),
+                "sections_discovered": len(all_secs),
+                "sections_sampled": sum(1 for s in all_secs if s.get("sampled")),
                 "frontier_stats": stats,
             },
         }
@@ -1038,6 +1143,21 @@ class Orchestrator:
                     f'    with open(_os.path.join(_ctx, "files.jsonl"), "a", encoding="utf-8") as _ff:\n'
                     f'        _ff.write(_json.dumps({{"url":url,"filename":_fname,"size":_size,"type":_type_map.get(_ext,"file"),"description":description}}, ensure_ascii=False) + "\\n")\n'
                     f'    print(f"Saved file: {{_fname}} ({{_size}} bytes)")\n'
+                    f'\n'
+                    f'def report_sections(sections):\n'
+                    f'    """Report section pages found during exploration.\n'
+                    f'    sections: list of dicts with url (required), title, agent_type, estimated_items,\n'
+                    f'              estimation_confidence, estimation_basis\n'
+                    f'    agent_type: what you observed — "listing" (shows items), "directory" (shows sub-sections),\n'
+                    f'                "mixed" (both), or omit if uncertain\n'
+                    f'    """\n'
+                    f'    _secs = sections if isinstance(sections, list) else [sections]\n'
+                    f'    with open(_os.path.join(_ctx, "sections.jsonl"), "a", encoding="utf-8") as _sf:\n'
+                    f'        for _s in _secs:\n'
+                    f'            if isinstance(_s, dict) and _s.get("url"):\n'
+                    f'                _sf.write(_json.dumps(_s, ensure_ascii=False, default=str) + "\\n")\n'
+                    f'    print(f"Reported {{len(_secs)}} section(s)")\n'
+                    f'\n'
                 )
                 code = preamble + "\n" + code
             elif language == "bash":
@@ -1094,6 +1214,21 @@ class Orchestrator:
                 if file_metas:
                     result["_files"] = file_metas
                     logger.info(f"execute_code side-channel: {len(file_metas)} files saved")
+
+            sections_file = os.path.join(ctx_dir, "sections.jsonl")
+            if os.path.exists(sections_file):
+                discovered_sections = []
+                with open(sections_file, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line:
+                            try:
+                                discovered_sections.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                pass
+                if discovered_sections:
+                    result["_sections"] = discovered_sections
+                    logger.info(f"execute_code side-channel: {len(discovered_sections)} sections")
 
             return result
         finally:
