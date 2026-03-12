@@ -1,5 +1,9 @@
 # 探索、长期记忆与数据库架构设计
 
+> **⚠️ 实现状态：本文档是远期愿景设计，绝大部分未实施。**
+> **DB schema（sections/samples/sessions 表）已创建但 DB 不是 source of truth（SharedFrontier 内存 dict 才是）。**
+> **Episodic 记忆、语义层、pgvector 均未实现。不要将本文档描述当作现有行为。**
+>
 > 本文档记录对话中形成的完整设计思路，尚未实施。
 
 ---

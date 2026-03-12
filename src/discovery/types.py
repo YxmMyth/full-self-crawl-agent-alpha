@@ -23,3 +23,4 @@ class SiteIntelligence:
     live_endpoints: list[str] = field(default_factory=list)   # paths confirmed via HTTP HEAD
     sitemap_sample: list[str] = field(default_factory=list)   # raw URLs from sitemap
     robots_txt: str = ""
+    search_degraded: bool = False  # True when DDG search failed after retries

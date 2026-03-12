@@ -53,9 +53,13 @@ async def discover(
     )
 
     # Tolerate individual signal failures
+    search_degraded = False
     if isinstance(search_results, Exception):
         logger.warning(f"Search signal failed: {search_results}")
         search_results = []
+        search_degraded = True
+    elif not search_results:
+        search_degraded = True
     if isinstance(sitemap_data, Exception):
         logger.warning(f"Sitemap signal failed: {sitemap_data}")
         sitemap_data = {"robots_txt": "", "candidates": [], "sitemap_found": False}
@@ -72,6 +76,7 @@ async def discover(
     )
 
     # Enrich with raw data for agent context
+    site_intel.search_degraded = search_degraded
     site_intel.robots_txt = sitemap_data.get("robots_txt", "")
     site_intel.live_endpoints = live_paths
     site_intel.sitemap_sample = [

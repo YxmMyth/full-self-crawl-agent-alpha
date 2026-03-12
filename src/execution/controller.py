@@ -12,10 +12,13 @@ Loop:
 5. If no tool_calls (LLM says done): compile results → return
 """
 
+import asyncio
 import json
 import logging
 import traceback
 from typing import Any
+
+from ..utils.url import normalize_url
 
 from .actions import LLMDecision, ToolCall, ToolResult
 from .history import StepHistory
@@ -46,6 +49,7 @@ class CrawlController:
         self._sampled_urls: set[str] = set()  # URLs where save_records() was called during exploration
         self._collected_sections: list[dict] = []
         self._task: dict = {}  # set at run() start
+        self._content_filter_retries: int = 0
 
     async def run(self, task: dict) -> dict:
         """Execute a crawl task with the LLM-as-Controller loop.
@@ -105,7 +109,24 @@ class CrawlController:
                     stop_reason = "LLM error: failed to get response"
                     break
 
+                # Content filter retry (Gemini safety filter) — before budget accounting
+                if (decision.finish_reason == "content_filter"
+                        and not decision.tool_calls):
+                    self._content_filter_retries += 1
+                    if self._content_filter_retries <= 3:
+                        logger.warning(
+                            f"content_filter on step {self._step_number} "
+                            f"(retry {self._content_filter_retries}/3)"
+                        )
+                        await asyncio.sleep(2)
+                        continue  # retry without consuming LLM budget
+                    else:
+                        stop_reason = f"content_filter exhausted ({self._content_filter_retries} retries)"
+                        logger.error(stop_reason)
+                        break
+
                 self.governor.record_llm_call(decision.total_tokens)
+                self._content_filter_retries = 0  # reset on any non-filter response
 
                 # Log what LLM decided
                 if decision.tool_calls:
@@ -417,17 +438,17 @@ class CrawlController:
                 if self._task.get("role") == "exploration":
                     current_url = self._task.get("current_url", "")
                     if current_url:
-                        self._sampled_urls.add(current_url.split("#")[0].rstrip("/"))
+                        self._sampled_urls.add(normalize_url(current_url))
                     # Mark the section being sampled based on current_url.
                     # Prefer exact URL match, then parent-path match, then most-recent fallback.
                     current_url = self._task.get("current_url", "")
-                    norm_current = current_url.split("#")[0].rstrip("/") if current_url else ""
+                    norm_current = normalize_url(current_url) if current_url else ""
                     matched = False
                     if norm_current:
                         for sec in reversed(self._collected_sections):
                             if sec.get("sampled"):
                                 continue
-                            sec_url = sec.get("url", "").split("#")[0].rstrip("/")
+                            sec_url = normalize_url(sec.get("url", ""))
                             if sec_url == norm_current or norm_current.startswith(sec_url + "/"):
                                 sec["sampled"] = True
                                 matched = True

@@ -26,9 +26,9 @@ class ContextManager:
     Total budget: ~5000 tokens/step, leaving room for LLM response + tool schemas.
     """
 
-    def __init__(self, max_history_steps: int = 3, max_tokens: int = 6000):
+    def __init__(self, max_history_steps: int = 3, max_context_chars: int = 24000):
         self.max_history_steps = max_history_steps
-        self.max_tokens = max_tokens
+        self.max_context_chars = max_context_chars  # ≈6000 tokens × 4 chars/token
 
     def build(self, task: dict, history, tools_schema: list[dict],
               nudges: str | None = None, progress: dict | None = None) -> list[dict]:
@@ -59,6 +59,13 @@ class ContextManager:
         # 4. Governance nudges (injected as system message)
         if nudges:
             messages.append({"role": "system", "content": nudges})
+
+        # 5. Token budget enforcement (B2.3)
+        total_chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
+        if total_chars > self.max_context_chars:
+            messages = self._trim_to_budget(messages, self.max_context_chars)
+            trimmed_chars = sum(len(json.dumps(m, ensure_ascii=False)) for m in messages)
+            logger.debug(f"Context trimmed: {total_chars} → {trimmed_chars} chars")
 
         return messages
 
@@ -352,6 +359,11 @@ Rules:
                 intel_lines.append(
                     f"robots.txt excerpt:\n{site_intel.robots_txt[:300]}"
                 )
+            if getattr(site_intel, "search_degraded", False):
+                intel_lines.append(
+                    "WARNING: Pre-search was rate-limited and returned no results. "
+                    "Use search_site() actively to discover content."
+                )
             intel_lines.append(
                 "This is a briefing — use it as a starting point, not as instructions. "
                 "You may search_site() with different keywords, probe_endpoint() new paths, "
@@ -439,6 +451,52 @@ Rules:
             })
 
         return messages
+
+    def _trim_to_budget(self, messages: list[dict], max_chars: int) -> list[dict]:
+        """Trim messages to fit within character budget.
+
+        Priority (kept last = hardest to trim):
+        1. System prompt (messages[0]) — always kept
+        2. Task context (messages[1]) — always kept
+        3. Most recent history step (last assistant+tool pair) — always kept
+        4. Governance nudges (last system message) — always kept
+        5. Older history steps — trimmed first, oldest removed first
+
+        Returns a new list; does not mutate the input.
+        """
+        # Identify message regions
+        # messages[0] = system prompt, messages[1] = task context
+        # Then history (assistant/tool pairs + optional old-step summary)
+        # Then optional nudge (system message at end)
+        kept_prefix = messages[:2]  # system + task
+        rest = messages[2:]
+
+        # Separate nudges (trailing system messages) from history
+        nudges = []
+        while rest and rest[-1].get("role") == "system":
+            nudges.insert(0, rest.pop())
+
+        # rest is now history messages (summary + assistant/tool pairs)
+        # Keep the most recent assistant+tool pair (last 2 messages if they exist)
+        kept_recent: list[dict] = []
+        if len(rest) >= 2:
+            kept_recent = rest[-2:]
+            trimmable = rest[:-2]
+        else:
+            kept_recent = list(rest)
+            trimmable = []
+
+        # Remove oldest trimmable messages (pairs of 2) until under budget
+        while trimmable:
+            candidate = kept_prefix + trimmable + kept_recent + nudges
+            total = sum(len(json.dumps(m, ensure_ascii=False)) for m in candidate)
+            if total <= max_chars:
+                return candidate
+            # Remove oldest 2 messages (one assistant+tool pair) or 1 if odd
+            remove_count = min(2, len(trimmable))
+            trimmable = trimmable[remove_count:]
+
+        return kept_prefix + kept_recent + nudges
 
     def _clear_tool_result(self, step, is_last: bool) -> str:
         """Clear/cap tool results to manage context budget.

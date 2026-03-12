@@ -255,10 +255,13 @@ class BrowserTool:
                 for _ in range(15):  # poll for up to 15s
                     await _asyncio.sleep(1)
                     try:
-                        count = await self.page.evaluate(
-                            "document.querySelectorAll('*').length"
+                        count = await _asyncio.wait_for(
+                            self.page.evaluate(
+                                "document.querySelectorAll('*').length"
+                            ),
+                            timeout=5.0,
                         )
-                    except Exception:
+                    except (Exception, _asyncio.TimeoutError):
                         break
                     if count == last_count:
                         stable_ticks += 1

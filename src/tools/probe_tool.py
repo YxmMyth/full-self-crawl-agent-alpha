@@ -37,9 +37,9 @@ class ProbeEndpointTool:
         url = f"{scheme}://{self.domain}{path}"
 
         # Safety: ensure we stay on domain
+        from ..utils.url import is_same_domain
         parsed = urlparse(url)
-        netloc = parsed.netloc.lstrip("www.")
-        if self.domain not in netloc:
+        if not is_same_domain(parsed.netloc, self.domain):
             return {"url": url, "exists": False, "status": 0, "error": "Domain mismatch"}
 
         try:

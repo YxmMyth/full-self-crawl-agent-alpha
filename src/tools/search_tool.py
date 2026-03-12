@@ -54,8 +54,9 @@ class SearchSiteTool:
                 if not url:
                     continue
                 # Domain safety check
-                netloc = urlparse(url).netloc.lstrip("www.")
-                if self.domain not in netloc:
+                from ..utils.url import is_same_domain
+                netloc = urlparse(url).netloc
+                if not is_same_domain(netloc, self.domain):
                     continue
                 results.append({
                     "url": url,

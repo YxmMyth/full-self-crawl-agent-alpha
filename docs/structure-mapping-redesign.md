@@ -1,5 +1,8 @@
 # 结构映射功能重设计方案
 
+> **⚠️ 实现状态：仅 Step 1（Extractor pre-navigation）已实施。**
+> **Phase 1.5 Listing Sampler、Phase 0 VerifiedListings、report_listing_urls() 均未实现。**
+
 ## 背景：上次实现的问题总结
 
 E2E 测试揭示了三个架构级根因，它们是"新功能无法生效"的真正原因，不是 prompt 写法问题：

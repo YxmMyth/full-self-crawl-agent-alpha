@@ -15,9 +15,13 @@ Files are the source of truth. Context is ephemeral. Files accumulate.
 
 import json
 import logging
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
+
+from ..utils.url import normalize_url
 
 logger = logging.getLogger("management.run_intelligence")
 
@@ -69,8 +73,7 @@ class RunIntelligence:
             return {}
 
     def _save_knowledge(self, data: dict) -> None:
-        with open(self._knowledge_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+        self._atomic_write(self._knowledge_file, data)
 
     def read(self, key: str | None = None) -> dict:
         """Read from run_knowledge. key=None returns everything."""
@@ -111,14 +114,28 @@ class RunIntelligence:
     # Golden records
     # ------------------------------------------------------------------
 
+    def _atomic_write(self, filepath: Path, data: dict) -> None:
+        """Write JSON atomically: temp file → os.replace. Crash-safe."""
+        parent = str(filepath.parent)
+        tmp_fd, tmp_path = tempfile.mkstemp(dir=parent, suffix=".tmp")
+        try:
+            with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+            os.replace(tmp_path, str(filepath))
+        except Exception:
+            try:
+                os.unlink(tmp_path)
+            except OSError:
+                pass
+            raise
+
     def save_golden_records(self, records: list[dict]) -> None:
         """Explorer saves 1-3 verified samples as structural reference."""
         if not records:
             return
         schema = self._infer_schema(records)
         data = {"records": records[:3], "schema": schema}
-        with open(self._golden_file, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False, default=str)
+        self._atomic_write(self._golden_file, data)
         logger.info(f"RunIntelligence: saved {min(len(records), 3)} golden records")
 
     def get_golden_records(self) -> list[dict]:
@@ -213,12 +230,46 @@ class RunIntelligence:
         entry = proven.setdefault(pattern, {"success_count": 0, "sample_urls": []})
         entry["script"] = script
         entry["success_count"] = entry.get("success_count", 0) + records_count
+        entry["attempts"] = entry.get("attempts", 0) + 1
         entry["sample_urls"] = (entry.get("sample_urls", []) + [url])[-3:]
 
         coverage = knowledge.setdefault("coverage", {})
         coverage["extracted_count"] = coverage.get("extracted_count", 0) + records_count
 
         self._save_knowledge(knowledge)
+
+    def _find_matching_pattern(self, url: str, proven: dict) -> str | None:
+        """Find the proven_scripts pattern key that matches a URL.
+
+        Returns the pattern string or None. Extracted from get_script_for_url
+        so both lookup and failure-tracking use the same match logic.
+        """
+        norm = normalize_url(url)
+        if norm in proven:
+            return norm
+        for pattern in proven:
+            if self._url_matches_pattern(norm, pattern):
+                return pattern
+        return None
+
+    def record_hard_replay_failure(self, url: str, reason: str) -> None:
+        """Record a hard-replay failure against the matching proven pattern.
+
+        Increments attempts + failures, appends to recent_failures[-3:],
+        and delegates to record_failure for the global failure_log.
+        """
+        knowledge = self._load_knowledge()
+        proven = knowledge.get("proven_scripts", {})
+        pattern = self._find_matching_pattern(url, proven)
+        if pattern and pattern in proven:
+            entry = proven[pattern]
+            entry["attempts"] = entry.get("attempts", 0) + 1
+            entry["failures"] = entry.get("failures", 0) + 1
+            recent = entry.get("recent_failures", [])
+            recent.append(reason)
+            entry["recent_failures"] = recent[-3:]
+            self._save_knowledge(knowledge)
+        self.record_failure(url, f"hard_replay: {reason}")
 
     def record_failure(self, url: str, reason: str) -> None:
         """Record a failure for the replan trigger system."""
@@ -250,7 +301,11 @@ class RunIntelligence:
 
     def get_estimated_total(self) -> int:
         knowledge = self._load_knowledge()
-        return knowledge.get("site_model", {}).get("estimated_total", 0)
+        raw = knowledge.get("site_model", {}).get("estimated_total", 0)
+        try:
+            return int(raw)
+        except (ValueError, TypeError):
+            return 0
 
     def update_coverage(self, extracted_count: int) -> None:
         knowledge = self._load_knowledge()
@@ -283,8 +338,20 @@ class RunIntelligence:
 
         proven = knowledge.get("proven_scripts", {})
         if proven:
-            lines.append(f"Proven extraction patterns: {list(proven.keys())}")
-            lines.append("→ Call read_run_knowledge('proven_scripts') for the verified scripts")
+            healthy = []
+            degraded = []
+            for pat, entry in proven.items():
+                attempts = entry.get("attempts", 0)
+                failures = entry.get("failures", 0)
+                if attempts >= 3 and failures >= 3 and (attempts - failures) / max(attempts, 1) < 0.5:
+                    degraded.append(pat)
+                else:
+                    healthy.append(pat)
+            if healthy:
+                lines.append(f"Proven extraction patterns (healthy): {healthy}")
+                lines.append("→ Call read_run_knowledge('proven_scripts') for the verified scripts")
+            if degraded:
+                lines.append(f"Proven extraction patterns (degraded, will skip): {degraded}")
 
         failures = knowledge.get("failure_log", [])
         if failures:
@@ -294,7 +361,10 @@ class RunIntelligence:
         coverage = knowledge.get("coverage", {})
         extracted = coverage.get("extracted_count", 0)
         if extracted:
-            total = site_model.get("estimated_total", 0)
+            try:
+                total = int(site_model.get("estimated_total", 0))
+            except (ValueError, TypeError):
+                total = 0
             if total:
                 lines.append(f"Coverage: {extracted}/{total} ({extracted/total:.0%}) extracted so far")
             else:
@@ -313,18 +383,29 @@ class RunIntelligence:
         return f"Golden record (Explorer-verified): {json.dumps(sample, ensure_ascii=False)}"
 
     def get_script_for_url(self, url: str) -> str | None:
-        """Look up a proven extraction script for a URL."""
+        """Look up a proven extraction script for a URL.
+
+        Skips degraded patterns: attempts >= 3 AND failures >= 3 AND success_rate < 0.5.
+        Backward-compat: entries without attempts/failures fields are never skipped.
+        """
         knowledge = self._load_knowledge()
         proven = knowledge.get("proven_scripts", {})
-        norm = url.split("#")[0].rstrip("/")
-        # Exact match first
-        if norm in proven:
-            return proven[norm].get("script")
-        # Pattern match
-        for pattern, data in proven.items():
-            if self._url_matches_pattern(norm, pattern):
-                return data.get("script")
-        return None
+        pattern = self._find_matching_pattern(url, proven)
+        if pattern is None:
+            return None
+        entry = proven[pattern]
+        # Skip degraded patterns
+        attempts = entry.get("attempts", 0)
+        failures = entry.get("failures", 0)
+        if attempts >= 3 and failures >= 3:
+            success_rate = (attempts - failures) / attempts if attempts else 0
+            if success_rate < 0.5:
+                logger.info(
+                    f"Skipping degraded proven script for {pattern}: "
+                    f"{failures}/{attempts} failures, rate={success_rate:.0%}"
+                )
+                return None
+        return entry.get("script")
 
     # ------------------------------------------------------------------
     # Internals
@@ -354,7 +435,11 @@ class RunIntelligence:
         return schema
 
     def _url_to_pattern(self, url: str) -> str:
-        """Convert a specific URL to a reusable wildcard pattern."""
+        """Convert a specific URL to a reusable wildcard pattern.
+
+        Returns anchored path pattern like /*/pen/* (leading /).
+        Slug-like segments (3-16 alphanum chars) become wildcards.
+        """
         from urllib.parse import urlparse
         path = urlparse(url).path
         segments = [s for s in path.split("/") if s]
@@ -365,14 +450,25 @@ class RunIntelligence:
                 normalized.append("*")
             else:
                 normalized.append(seg)
-        return "*/" + "/".join(normalized) if normalized else "*"
+        return "/" + "/".join(normalized) if normalized else "/*"
 
     def _url_matches_pattern(self, url: str, pattern: str) -> bool:
-        """Check if a URL matches a */path/* wildcard pattern."""
+        """Check if a URL path matches a wildcard pattern with full-path anchoring.
+
+        Pattern format: /segment/*/segment/* where * matches exactly one path segment.
+        Both start (^) and end ($) are anchored — no substring matching.
+        """
         from urllib.parse import urlparse
-        path = urlparse(url).path
-        pat = pattern.lstrip("*/").replace("*", "[^/]+")
+        path = urlparse(url).path.rstrip("/")
+        segments = pattern.strip("/").split("/")
+        regex_parts = []
+        for seg in segments:
+            if seg == "*":
+                regex_parts.append("[^/]+")
+            else:
+                regex_parts.append(re.escape(seg))
+        regex = "^/" + "/".join(regex_parts) + "$"
         try:
-            return bool(re.search(pat, path))
+            return bool(re.match(regex, path))
         except re.error:
             return False

@@ -72,14 +72,13 @@ async def sitemap_signal(domain: str, requirement: str, scheme: str = "https") -
                     pass
 
             # 3. Score candidates by keyword match in URL
-            base_netloc = domain.lstrip("www.")
             candidates = []
             for loc in all_locs[:500]:
                 loc = loc.strip()
                 try:
+                    from ...utils.url import is_same_domain
                     lp = urlparse(loc)
-                    netloc = lp.netloc.lstrip("www.")
-                    if base_netloc not in netloc:
+                    if not is_same_domain(lp.netloc, domain):
                         continue
                     url_lower = loc.lower()
                     kw_hits = sum(1 for kw in keywords if kw in url_lower)

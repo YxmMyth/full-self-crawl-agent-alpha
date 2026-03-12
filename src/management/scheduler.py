@@ -13,6 +13,8 @@ from enum import Enum
 from typing import Any
 from urllib.parse import urlparse
 
+from ..utils.url import normalize_url
+
 logger = logging.getLogger("management.scheduler")
 
 
@@ -53,7 +55,7 @@ class CrawlFrontier:
             category: str = "other", parent_url: str = "") -> bool:
         """Add URL to frontier. Returns False if duplicate or filtered."""
         # Normalize
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
 
         if url in self._all_urls:
             return False
@@ -101,7 +103,7 @@ class CrawlFrontier:
         return None
 
     def mark_visited(self, url: str) -> None:
-        self._visited.add(url.split("#")[0].rstrip("/"))
+        self._visited.add(normalize_url(url))
 
     @property
     def pending_count(self) -> int:
@@ -181,6 +183,9 @@ class SharedFrontier:
         self._consecutive_failures = 0
         self._total_extracted = 0
         self._spec = spec  # CrawlSpec for spec-aware validation
+        # Per-section coverage tracking (B1.4)
+        self._section_records: dict[str, int] = {}
+        self._url_to_section: dict[str, str] = {}
 
     def seed_from_intel(self, site_intel, start_url: str) -> int:
         """Pre-populate from Phase 0 SiteIntelligence + start URL.
@@ -201,7 +206,7 @@ class SharedFrontier:
     def add(self, url: str, priority: float = 1.0, url_type: str = "content",
             discovered_by: str = "explorer", extraction_hint: str = "") -> bool:
         """Add URL. Returns False if duplicate or at capacity."""
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
         if not url or url in self._records:
             return False
         if len(self._records) >= self._max_urls:
@@ -232,21 +237,37 @@ class SharedFrontier:
         return added
 
     def next(self) -> URLRecord | None:
-        """Return highest-priority QUEUED URL, or None if frontier exhausted."""
+        """Return highest-priority QUEUED URL, preferring under-covered sections.
+
+        Sorting key: (section_boost, priority).
+        section_boost = 1.0 if the URL belongs to a section with 0 records,
+        0.5 if it has no section association, 0.0 otherwise.
+        This ensures zero-record sections get extracted first without
+        penalizing URLs that have no section association.
+        """
         candidates = [r for r in self._records.values() if r.status == URLStatus.QUEUED]
         if not candidates:
             return None
-        return max(candidates, key=lambda r: r.priority)
+
+        def _sort_key(r: URLRecord):
+            section = self._url_to_section.get(r.url)
+            if section is not None and section in self._section_records:
+                section_boost = 1.0 if self._section_records[section] == 0 else 0.0
+            else:
+                section_boost = 0.5  # no association — neutral, don't penalize
+            return (section_boost, r.priority)
+
+        return max(candidates, key=_sort_key)
 
     def mark_in_flight(self, url: str) -> None:
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
         if url in self._records:
             self._records[url].status = URLStatus.IN_FLIGHT
 
     def mark_extracted(self, url: str, records_count: int,
                        new_data: list[dict] | None = None) -> None:
         """Mark URL as fully extracted. Appends deduplicated records to all_data."""
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
         if url not in self._records:
             self.add(url, discovered_by="extractor")
         rec = self._records[url]
@@ -259,11 +280,15 @@ class SharedFrontier:
         self._consecutive_failures = 0 if records_count > 0 else self._consecutive_failures + 1
         if new_data:
             self._ingest_data(new_data)
+        # Update per-section coverage (B1.4)
+        section = self._url_to_section.get(url)
+        if section and section in self._section_records and records_count > 0:
+            self._section_records[section] += records_count
 
     def mark_sampled(self, url: str, records_count: int = 1,
                      new_data: list[dict] | None = None) -> None:
         """Explorer extracted a validation sample — Phase 2 will skip this URL."""
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
         if url not in self._records:
             self.add(url, discovered_by="explorer")
         rec = self._records[url]
@@ -272,8 +297,35 @@ class SharedFrontier:
         if new_data:
             self._ingest_data(new_data)
 
+    def get_status(self, url: str) -> "URLStatus | None":
+        """Public method to check URL status. Returns None if URL not in frontier."""
+        norm = normalize_url(url)
+        rec = self._records.get(norm)
+        return rec.status if rec else None
+
+    # ------------------------------------------------------------------
+    # Per-section coverage tracking (B1.4)
+    # ------------------------------------------------------------------
+
+    def register_section(self, url: str) -> None:
+        """Register a section URL for coverage tracking. Initializes count to 0."""
+        url = normalize_url(url)
+        if url and url not in self._section_records:
+            self._section_records[url] = 0
+
+    def associate_url_with_section(self, content_url: str, section_url: str) -> None:
+        """Associate a content URL with its parent section for coverage counting."""
+        content_url = normalize_url(content_url)
+        section_url = normalize_url(section_url)
+        if content_url and section_url:
+            self._url_to_section[content_url] = section_url
+
+    def section_coverage(self) -> dict[str, int]:
+        """Return a copy of per-section record counts."""
+        return dict(self._section_records)
+
     def mark_failed(self, url: str, reason: str = "") -> None:
-        url = url.split("#")[0].rstrip("/")
+        url = normalize_url(url)
         if url not in self._records:
             self.add(url, discovered_by="extractor")
         rec = self._records[url]
